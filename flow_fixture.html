@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>威秀流程測試替身</title>
+<select id="theater" onchange="location.href='?cinema='+encodeURIComponent(this.value)">
+<option value="">請選擇影城</option>
+<option value="1|TP">台北信義威秀影城</option>
+<option value="21|MU">MUVIE CINEMAS 台北松仁</option>
+<option value="12|QS">台北京站威秀影城</option>
+<option value="34|TX">台北西門威秀影城</option>
+<option value="16|BQ">板橋大遠百威秀影城</option>
+<option value="32|HU">新店裕隆城威秀影城</option>
+<option value="19|LK">林口MITSUI OUTLET PARK威秀影城</option>
+<option value="20|TY">桃園統領威秀影城</option>
+<option value="2|HS">新竹大遠百威秀影城</option>
+<option value="14|BC">新竹巨城威秀影城</option>
+<option value="3|TT01">MUVIE CINEMAS 台中TIGER CITY</option>
+<option value="5|TN">台南大遠百威秀影城</option>
+<option value="17|NF">台南南紡威秀影城</option>
+<option value="6|KS">高雄大遠百威秀影城</option>
+</select>
+<div id="movieListBox1" class="movieListBox"><ul class="movieList"></ul></div>
+<label>票數<input id="tickets" value="1"></label><label><input type="checkbox" id="agree">我同意</label>
+<script>
+const query=new URLSearchParams(location.search), cinema=query.get('cinema');
+if(cinema){
+document.querySelector('#theater').value=cinema;
+for(const [id,title] of [['FIRST','第一部電影'],['SECOND','第二部電影']]){
+const li=document.createElement('li'),a=document.createElement('a');
+a.href='?cinema='+encodeURIComponent(cinema)+'&movie='+id;a.textContent=title;
+li.append(a);document.querySelector('.movieList').append(li);
+}}
+</script></html>

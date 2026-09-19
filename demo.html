@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="zh-Hant"><meta charset="utf-8"><title>電影購票・本機示範</title>
+<style>body{margin:0;background:#101827;color:#eaf0fb;font:18px 'Microsoft JhengHei',sans-serif}main{max-width:580px;margin:70px auto;padding:40px;background:#1b2940;border-radius:20px}small{color:#70d5c5}h1{font-size:32px}label{display:block;margin:24px 0 8px}select{padding:12px;width:100%;font-size:18px;border-radius:8px}input{width:20px;height:20px}p{line-height:1.8;color:#b8c7dc}output{display:block;background:#101827;padding:20px;border-radius:10px;line-height:1.8}</style>
+<main><small>LOCAL DEMO / 本機示範</small><h1>你的下一場電影</h1><p>供程式驗證影城、票數與同意勾選流程。此頁不會建立訂單。</p>
+<label for="cinema">影城</label><select id="cinema"><option value="">請選擇影城</option><option>台北示範影城</option><option>台中示範影城</option><option>高雄示範影城</option><option>MUVIE CINEMAS 台北松仁</option><option>新店裕隆城威秀影城</option><option>新竹大遠百威秀影城</option><option>新竹巨城威秀影城</option><option>MUVIE CINEMAS 台中TIGER CITY</option><option>台南南紡威秀影城</option><option>高雄大遠百威秀影城</option></select>
+<label for="tickets">票數</label><select id="tickets"></select>
+<label><input type="checkbox" id="agree">我同意</label><output id="summary">等待設定…</output></main>
+<script>const tickets=document.querySelector('#tickets'); for(let i=1;i<=20;i++)tickets.add(new Option(String(i),String(i)));document.addEventListener('change',()=>{document.querySelector('#summary').textContent=`影城：${document.querySelector('#cinema').value||'尚未選擇'} ／ 票數：${tickets.value} ／ 同意：${document.querySelector('#agree').checked?'是':'否'}`})</script></html>

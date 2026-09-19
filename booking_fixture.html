@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>Local booking fixture</title>
+<div id="bookOther"><input type="checkbox" id="agree"><input type="submit" value="Wrong submit" onclick="document.body.dataset.wrong='yes'"></div>
+<a href="#bookNormal" onclick="document.querySelector('#bookNormal').hidden=false;return false">一般票種</a>
+<div id="bookNormal" hidden><form action="https://sales.vscinemas.com.tw/LiveTicketD4/">
+<input type="checkbox" id="agree" name="agree" required><label for="agree">我同意（本機測試）</label>
+<input type="submit" value="前往訂票">
+<input type="hidden" name="cinemacode" value="21"><input type="hidden" name="txtSessionId" value="165195">
+</form></div>

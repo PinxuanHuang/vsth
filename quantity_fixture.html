@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>Local quantity fixture</title>
+<style>.collapse:not(.in){display:none}.collapsing{overflow:hidden}</style>
+<select id="unrelated"><option>不要操作</option></select>
+<div class="panel panel-primary"><div class="panel-heading"><h4 class="panel-title">銀行優惠票種</h4></div>
+<select class="form-control-s" id="bank"><option value="0">0</option><option value="3">3</option></select></div>
+<div class="panel panel-primary"><div class="panel-heading"><h4 class="panel-title"><a data-toggle="collapse" href="#random-collapse" class="collapsed" aria-expanded="false" onclick="const body=document.querySelector('#random-collapse');body.hidden=false;body.className='panel-collapse collapse in';body.style.height='auto';body.setAttribute('aria-expanded','true');this.classList.remove('collapsed');this.setAttribute('aria-expanded','true');return false"><i class="fa fa-film"></i> 一般票種 </a></h4></div>
+<div id="random-collapse" class="panel-collapse collapse" aria-expanded="false" style="height:0px"><div class="panel-body"><table><tbody>
+<tr><td><span class="spName">優待票</span></td><td><select class="form-control-s" id="discount"><option value="0">0</option><option value="3">3</option></select></td></tr>
+<tr><td><span class="spName">全票</span></td><td>
+<label for="DYNAMIC-ID-999">張數</label>
+<select class="form-control-s" id="DYNAMIC-ID-999" data-hocode="TEST" data-pricecode="9999"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+</td></tr></tbody></table></div></div></div>
+<a id="btnDoNext" href="#" onclick="location.href='/LiveTicketD4/Seats?count='+document.querySelector('[data-pricecode]').value;return false">繼續</a>
