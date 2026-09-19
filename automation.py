@@ -108,27 +108,31 @@ def select_cinema_and_first_movie(page, settings, log, stop=None, timeout=30):
 
 
 def find_showtime_url(page_url, sessions, settings):
-    """Match full local date and time; never use the adjacent seat-preview link."""
+    """Match a date's list, then take its first/last li in DOM order."""
     wanted = parse_showtime(settings.showtime)
+    if settings.session_position not in ("first", "last"):
+        raise ValueError("請選擇第一場或最後一場。")
     matches, available = [], []
     for session in sessions:
         date = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", session["date"])
-        clock = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", session["time"])
-        if not date or not clock:
+        if not date:
             continue
         try:
-            stamp = datetime(*map(int, date.groups()), *map(int, clock.groups()))
+            stamp = datetime(*map(int, date.groups()))
         except ValueError:
             continue
-        available.append(stamp.strftime("%Y-%m-%d %H:%M"))
+        available.append(stamp.strftime("%Y-%m-%d"))
         if stamp == wanted:
             matches.append(session)
     if not matches:
         choices = "、".join(sorted(set(available))) or "無可辨識場次"
         raise ValueError(f"找不到指定場次 {settings.showtime}。頁面場次：{choices}")
     if len(matches) != 1:
-        raise ValueError(f"{settings.showtime} 有多個相同時間場次，請手動確認，程式未自動選擇。")
-    session = matches[0]
+        raise ValueError(f"{settings.showtime} 有多個日期清單，請手動確認，程式未自動選擇。")
+    entries = matches[0]["entries"]
+    if not entries:
+        raise ValueError(f"指定場次 {settings.showtime} 目前無法訂票。")
+    session = entries[0 if settings.session_position == "first" else -1]
     if session.get("disabled") or not session.get("href"):
         raise ValueError(f"指定場次 {settings.showtime} 目前無法訂票。")
     destination = urljoin(page_url, session["href"])
@@ -159,11 +163,14 @@ def select_showtime(page, settings, log, stop=None, timeout=30):
             raise ValueError("電影場次頁已變更，請重新套用。")
         try:
             sessions = page.locator("section.movieTime .movieDay").evaluate_all("""days => days.flatMap(day =>
-                Array.from(day.querySelectorAll('ul.bookList > li > a')).map(a => ({
-                    date: day.querySelector('h4')?.textContent || '', time: a.textContent.trim(),
-                    href: a.getAttribute('href'), disabled: a.hasAttribute('disabled') ||
-                    a.getAttribute('aria-disabled') === 'true' || a.parentElement.getAttribute('aria-disabled') === 'true' ||
-                    ['disabled','soldout','sold-out'].some(c => a.classList.contains(c) || a.parentElement.classList.contains(c))
+                Array.from(day.querySelectorAll('ul.bookList')).map(list => ({
+                    date: day.querySelector('h4')?.textContent || '',
+                    entries: Array.from(list.querySelectorAll(':scope > li')).map(li => {
+                        const a = li.querySelector(':scope > a');
+                        return {href: a?.getAttribute('href'), disabled: !a || a.hasAttribute('disabled') ||
+                            a.getAttribute('aria-disabled') === 'true' || li.getAttribute('aria-disabled') === 'true' ||
+                            ['disabled','soldout','sold-out'].some(c => a.classList.contains(c) || li.classList.contains(c))};
+                    })
                 })))""")
             if sessions:
                 break
@@ -176,7 +183,8 @@ def select_showtime(page, settings, log, stop=None, timeout=30):
     destination = find_showtime_url(base_url, sessions, settings)
     if stop.is_set():
         raise Cancelled()
-    log(f"已找到場次：{settings.showtime}；前往 {destination}")
+    position = "第一場" if settings.session_position == "first" else "最後一場"
+    log(f"已找到場次：{settings.showtime} {position}；前往 {destination}")
     response = page.goto(destination, wait_until="domcontentloaded", timeout=30000)
     if response is not None and response.status >= 400:
         raise ValueError(f"場次頁面載入失敗（HTTP {response.status}）。")
@@ -378,7 +386,7 @@ class TicketFlow:
         try:
             select_cinema_and_first_movie(page, self.settings, lambda s: self.emit("log", s), self.stop)
             if self.settings.showtime:
-                self.emit("status", "正在比對場次日期與時間…")
+                self.emit("status", "正在比對日期並選擇第一場／最後一場…")
                 select_showtime(page, self.settings, lambda s: self.emit("log", s), self.stop)
                 self.booking_page = page
                 self.prior_pages = list(pages)

@@ -7,10 +7,10 @@
 ## 使用
 
 1. 開啟 `dist/expand-ticket/MovieTicketAssistant.exe`（本次新版）。
-2. 輸入起始網址，從下拉選單選影城，選擇場次的年／月／日／時／分（24 小時制、台灣場次時間），設定票數與是否自動勾選「我同意」。日期必須有效，日選單會隨月份與閏年調整。
+2. 輸入起始網址，從下拉選單選影城，選擇場次的年／月／日及「第一場／最後一場」，設定票數與是否自動勾選「我同意」。日期必須有效，日選單會隨月份與閏年調整。
 3. 按「儲存並執行」，程式會開啟獨立 Edge 視窗，顯示「等待你手動進入購票專區」。
 4. 自行點選要購票的專區。進入威秀的 `vsTicketingSP` 或 `vsTicketingSP數字` 購票頁後，程式會自動選影城，再點電影清單第一項，完成後保留瀏覽器。路徑取自實際進入的專區，不固定為第一專區；一般 `vsTicketing` 入口仍等待你選擇搶票專區。原分頁導覽與另開分頁皆支援，不需再按按鈕。
-5. 選完第一部電影後，會比對指定日期與時間，進入該場次入口。啟用自動同意時，會勾選一般票種規定並送出；未啟用時，等待你自行同意並前往購票頁。程式接著設定票數並點「繼續」，交由你操作後續步驟。瀏覽器與程式保持開啟，完成後不再自動操作。
+5. 選完第一部電影後，會比對指定日期並依設定選擇第一場或最後一場，進入該場次入口。啟用自動同意時，會勾選一般票種規定並送出；未啟用時，等待你自行同意並前往購票頁。程式接著設定票數並點「繼續」，交由你操作後續步驟。瀏覽器與程式保持開啟，完成後不再自動操作。
 6. 按「停止並關閉瀏覽器」結束工作階段。關閉主視窗亦會關閉由本程式開啟的瀏覽器，不影響原本的 Edge。
 
 ## 目前範圍與網站適配
@@ -25,11 +25,13 @@
 - 設定張數超出網站選項時會顯示可選張數，不會偷偷減少張數。成功後只點一次 `a#btnDoNext`，等待網址或步驟切換，再顯示「請在瀏覽器接手」。網站驗證未通過時顯示等待逾時，保留頁面，不重複提交。
 - 接手後「重新套用」會停用，避免意外重跑；程式持續執行。若流程異常，瀏覽器也會保留供手動完成。
 
-### 指定日期與時間
+### 指定日期與第一場／最後一場
 
-設定以 `YYYY-MM-DD HH:mm` 儲存，例如 `2026-09-25 19:20`。舊設定檔仍可讀取，第一次使用新版請補選場次日期與時間；本機舊版表單示範不要求場次設定。
+設定以 `YYYY-MM-DD` 儲存，例如 `2026-09-25`；`session_position` 為 `first`（第一場，預設）或 `last`（最後一場）。舊設定檔的日期時間會保留日期、移除時間，預設選第一場；本機表單示範不要求場次設定。
 
-程式讀取 `section.movieTime .movieDay` 中的 `h4` 日期，僅比對 `ul.bookList > li > a` 的時間，排除旁邊的座位查詢圖示連結。只有完整日期與時間相符且唯一的場次才會繼續。無相符場次會列出頁面場次；重複時間、停用場次或連結影城／專區不符時會停下。日期時間完全依頁面顯示比對，不自動改選鄰近場次，也不把 24:00 猜成次日 00:00。
+本次新版執行檔：`dist/session-position/MovieTicketAssistant.exe`。
+
+程式讀取 `section.movieTime .movieDay` 中的 `h4` 日期，找到該日期的 `ul.bookList`，依設定取清單中第一個或最後一個直接子 `<li>` 內的 `<a href>`，排除旁邊的座位查詢圖示連結。完全依網頁排列順序選擇，不排序或比對時間文字。找不到日期、同日期有多個清單、指定首尾項無法訂票，或連結影城／專區不符時會停下，不跳過首尾項改選其他場次。其餘購票流程維持原樣。
 
 例如第二專區頁面上的 `booking.aspx?cinemacode=21&txtSessionId=165195` 會以該頁 URL 為基準解析為 `https://www.vscinemas.com.tw/vsTicketingSP2/ticketing/booking.aspx?cinemacode=21&txtSessionId=165195`。場次代碼讀取自實際頁面，不寫死。載入後保留瀏覽器供下一步操作，網站若要求登入亦交由使用者處理。
 
@@ -85,7 +87,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 -OutputDirectory dist/expan
 Start-Process -FilePath .\dist\MovieTicketAssistant.exe -ArgumentList '--smoke-test', 'test-results/exe-smoke.json' -Wait
 ```
 
-`--smoke-test` 驗證 Tkinter、日期時間、三專區、指定場次、同 scope 同意表單、動態 ID 票數選單與繼續後保留瀏覽器。使用攔截回應的本機 HTML，不對真實網站下單或接受真實條款。成功時輸出 JSON。請先建立 `test-results` 資料夾。
+`--smoke-test` 驗證 Tkinter、日期與首尾場次設定、三專區、指定場次、同 scope 同意表單、動態 ID 票數選單與繼續後保留瀏覽器。使用攔截回應的本機 HTML，不對真實網站下單或接受真實條款。成功時輸出 JSON。請先建立 `test-results` 資料夾。
 
 技術參考：[Playwright 的 Edge 支援](https://playwright.dev/python/docs/browsers)、[PyInstaller 打包說明](https://playwright.dev/python/docs/library#pyinstaller)。
 

@@ -55,13 +55,13 @@ class App(tk.Tk):
         self.inputs.append(check)
         date_frame = ttk.Frame(frame)
         date_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 14))
-        ttk.Label(date_frame, text="場次時間").grid(row=0, column=0, padx=(0, 14))
-        self.date_vars = {key: tk.StringVar() for key in ("year", "month", "day", "hour", "minute")}
+        ttk.Label(date_frame, text="場次日期").grid(row=0, column=0, padx=(0, 14))
+        self.date_vars = {key: tk.StringVar() for key in ("year", "month", "day")}
         self.date_combos = {}
         year = datetime.datetime.now().year
         for col, (key, label, values) in enumerate((
             ("year", "年", range(year, year + 11)), ("month", "月", range(1, 13)),
-            ("day", "日", range(1, 32)), ("hour", "時", range(24)), ("minute", "分", range(60))
+            ("day", "日", range(1, 32))
         )):
             combo = ttk.Combobox(date_frame, width=5 if key == "year" else 3, state="readonly",
                                  textvariable=self.date_vars[key], values=[f"{n:02d}" for n in values])
@@ -71,7 +71,12 @@ class App(tk.Tk):
             self.inputs.append(combo)
             if key in ("year", "month"):
                 combo.bind("<<ComboboxSelected>>", self.update_days)
-        ttk.Label(date_frame, text="24 小時制／台灣場次時間。設定票數並繼續後交由你接手。", foreground="#52627a").grid(row=1, column=0, columnspan=11, sticky="w", pady=(7, 0))
+        self.session_position = tk.StringVar(value="第一場")
+        self.session_combo = ttk.Combobox(date_frame, width=8, state="readonly",
+                                         textvariable=self.session_position, values=("第一場", "最後一場"))
+        self.session_combo.grid(row=0, column=7, padx=(8, 0))
+        self.inputs.append(self.session_combo)
+        ttk.Label(date_frame, text="依當日清單順序選第一場或最後一場。設定票數並繼續後交由你接手。", foreground="#52627a").grid(row=1, column=0, columnspan=11, sticky="w", pady=(7, 0))
         advanced = ttk.LabelFrame(frame, text="進階欄位設定（選填）", padding=12)
         advanced.grid(row=7, column=0, columnspan=3, sticky="ew")
         advanced.columnconfigure(1, weight=1)
@@ -101,7 +106,7 @@ class App(tk.Tk):
         except Exception as exc:
             self.populate(Settings())
             self.log(f"無法讀取上次設定，已使用預設值：{exc}")
-        self.log("執行後請自行點選購票專區。程式會選影城與第一部電影，再比對指定日期時間進入場次。")
+        self.log("執行後請自行點選購票專區。程式會選影城與第一部電影，再依指定日期選擇第一場或最後一場。")
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.after_id = self.after(100, self.poll)
 
@@ -109,6 +114,7 @@ class App(tk.Tk):
         for key, variable in self.variables.items():
             variable.set(str(getattr(settings, key)))
         self.agree.set(settings.agree)
+        self.session_position.set("第一場" if settings.session_position == "first" else "最後一場")
         stamp = parse_showtime(settings.showtime) if settings.showtime else None
         if stamp:
             years = set(self.date_combos["year"]["values"])
@@ -131,7 +137,7 @@ class App(tk.Tk):
 
     def selected_showtime(self):
         values = {key: variable.get() for key, variable in self.date_vars.items()}
-        stamp = "{year}-{month}-{day} {hour}:{minute}".format(**values)
+        stamp = "{year}-{month}-{day}".format(**values)
         parse_showtime(stamp)
         return stamp
 
@@ -149,6 +155,7 @@ class App(tk.Tk):
         for widget in self.inputs + [self.start_button, self.demo_button]:
             widget.configure(state="disabled" if running else "normal")
         self.cinema_combo.configure(state="disabled" if running else "readonly")
+        self.session_combo.configure(state="disabled" if running else "readonly")
         for combo in self.date_combos.values():
             combo.configure(state="disabled" if running else "readonly")
         for widget in (self.retry_button, self.stop_button):
@@ -163,7 +170,8 @@ class App(tk.Tk):
                 values["tickets"] = int(values["tickets"])
             except ValueError:
                 raise ValueError("票數必須是 1～20 的整數。") from None
-            settings = Settings(**values, agree=self.agree.get())
+            settings = Settings(**values, agree=self.agree.get(),
+                                session_position="first" if self.session_position.get() == "第一場" else "last")
             if settings.url != "demo://ticket":
                 settings.showtime = self.selected_showtime()
             if settings.cinema not in CINEMAS:
@@ -222,8 +230,12 @@ def smoke_test(output):
     app = App()
     app.withdraw()
     app.update()
-    app.populate(Settings(cinema="MUVIE CINEMAS 台北松仁", showtime="2028-02-29 00:05"))
-    assert app.selected_showtime() == "2028-02-29 00:05"
+    app.populate(Settings(cinema="MUVIE CINEMAS 台北松仁", showtime="2028-02-29"))
+    assert app.selected_showtime() == "2028-02-29"
+    assert set(app.date_vars) == {"year", "month", "day"}
+    assert app.session_position.get() == "第一場"
+    app.populate(Settings(showtime="2028-02-29", session_position="last"))
+    assert app.session_position.get() == "最後一場"
     assert len(app.date_combos["day"]["values"]) == 29
     app.date_vars["year"].set("2027")
     app.update_days()
@@ -231,6 +243,7 @@ def smoke_test(output):
     app.busy(True)
     app.busy(False)
     assert all(str(combo["state"]) == "readonly" for combo in app.date_combos.values())
+    assert str(app.session_combo["state"]) == "readonly"
     app.destroy()
     settings = Settings(url="demo://ticket", cinema="台中示範影城", tickets=3, agree=True)
     with sync_playwright() as pw:
@@ -252,7 +265,7 @@ def smoke_test(output):
             assert not page.locator("#agree").is_checked()
             page.goto("https://www.vscinemas.com.tw/vsTicketingSP3/ticketing/ticket.aspx?cinema=21%7CMU&movie=FIRST")
             page.set_content(resource("session_fixture.html").read_text(encoding="utf-8"))
-            select_showtime(page, Settings(cinema="MUVIE CINEMAS 台北松仁", showtime="2026-09-25 19:20"), lambda _: None)
+            select_showtime(page, Settings(cinema="MUVIE CINEMAS 台北松仁", showtime="2026-09-25", session_position="last"), lambda _: None)
             assert "/vsTicketingSP3/ticketing/booking.aspx?cinemacode=21&txtSessionId=165195" in page.url
             import threading
             page.set_content(resource('booking_fixture.html').read_text(encoding='utf-8'))
@@ -264,7 +277,7 @@ def smoke_test(output):
             assert '/Seats?count=3' in page.url and not page.is_closed()
         finally:
             browser.close()
-    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "datetime dropdowns", "leap year", "Edge", "three areas", "exact showtime", "scoped normal consent", "dynamic quantity ID", "continue and keep browser"]}), encoding="utf-8")
+    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser"]}), encoding="utf-8")
 
 
 if __name__ == "__main__":

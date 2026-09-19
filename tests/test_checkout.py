@@ -38,7 +38,7 @@ class CheckoutTests(unittest.TestCase):
             route.fulfill(body=body, content_type='text/html')
         self.context.route('**/*', fulfill)
         self.page = self.context.new_page()
-        self.settings = Settings(cinema='MUVIE CINEMAS 台北松仁', agree=True, tickets=3, showtime='2026-09-25 19:20')
+        self.settings = Settings(cinema='MUVIE CINEMAS 台北松仁', agree=True, tickets=3, showtime='2026-09-25', session_position='last')
         self.stop = threading.Event()
         self.events = []
 

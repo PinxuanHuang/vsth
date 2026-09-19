@@ -27,14 +27,14 @@ CINEMAS = {
 
 def parse_showtime(value):
     if not isinstance(value, str):
-        raise ValueError("場次日期時間格式錯誤。")
+        raise ValueError("場次日期格式錯誤。")
     try:
-        result = datetime.strptime(value, "%Y-%m-%d %H:%M")
-        if result.strftime("%Y-%m-%d %H:%M") != value:
+        result = datetime.strptime(value, "%Y-%m-%d")
+        if result.strftime("%Y-%m-%d") != value:
             raise ValueError()
         return result
     except ValueError:
-        raise ValueError("請選擇有效場次日期時間（年/月/日 時:分，24 小時制）。") from None
+        raise ValueError("請選擇有效場次日期（年/月/日）。") from None
 
 
 @dataclass
@@ -47,12 +47,15 @@ class Settings:
     tickets_selector: str = ""
     agree_selector: str = ""
     showtime: str = ""
+    session_position: str = "first"
 
     def validate(self):
         if self.showtime:
             parse_showtime(self.showtime)
         elif not isinstance(self.showtime, str):
-            raise ValueError("場次日期時間格式錯誤。")
+            raise ValueError("場次日期格式錯誤。")
+        if self.session_position not in ("first", "last"):
+            raise ValueError("請選擇第一場或最後一場。")
         for name in ("url", "cinema", "cinema_selector", "tickets_selector", "agree_selector"):
             if not isinstance(getattr(self, name), str):
                 raise ValueError("設定文字格式錯誤。")
@@ -79,6 +82,12 @@ def load_settings(path=None):
     if not path.exists():
         return Settings()
     data = json.loads(path.read_text(encoding="utf-8"))
+    # Preserve the date from settings saved by the former date/time picker.
+    stamp = data.get("showtime")
+    if isinstance(stamp, str) and len(stamp) == 16:
+        parsed = datetime.strptime(stamp, "%Y-%m-%d %H:%M")
+        if parsed.strftime("%Y-%m-%d %H:%M") == stamp:
+            data["showtime"] = parsed.strftime("%Y-%m-%d")
     result = Settings(**{k: v for k, v in data.items() if k in Settings.__dataclass_fields__})
     result.validate()
     return result
