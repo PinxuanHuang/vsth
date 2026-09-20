@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from automation import BrowserWorker, apply_settings, resource, select_cinema_and_first_movie, select_showtime, target_url, submit_normal_booking, select_quantity_and_continue
-from config import CINEMAS, Settings, load_settings, parse_showtime, save_settings
+from config import CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
 
 
 class App(tk.Tk):
@@ -76,9 +76,39 @@ class App(tk.Tk):
                                          textvariable=self.session_position, values=("第一場", "最後一場"))
         self.session_combo.grid(row=0, column=7, padx=(8, 0))
         self.inputs.append(self.session_combo)
-        ttk.Label(date_frame, text="依當日清單順序選第一場或最後一場。設定票數並繼續後交由你接手。", foreground="#52627a").grid(row=1, column=0, columnspan=11, sticky="w", pady=(7, 0))
-        advanced = ttk.LabelFrame(frame, text="進階欄位設定（選填）", padding=12)
-        advanced.grid(row=7, column=0, columnspan=3, sticky="ew")
+        tabs = ttk.Notebook(frame)
+        tabs.grid(row=7, column=0, columnspan=3, sticky="ew")
+        seats = ttk.Frame(tabs, padding=12)
+        advanced = ttk.Frame(tabs, padding=12)
+        tabs.add(seats, text="座位偏好")
+        tabs.add(advanced, text="進階欄位設定")
+        self.seat_mode = tk.StringVar(value="手動選位")
+        self.seat_direction = tk.StringVar(value="左側優先")
+        self.seat_contiguous = tk.BooleanVar(value=True)
+        ttk.Label(seats, text="選位方式").grid(row=0, column=0, sticky="w", pady=4)
+        self.seat_combo = ttk.Combobox(seats, textvariable=self.seat_mode, values=list(SEAT_MODES), state="readonly", width=15)
+        self.seat_combo.grid(row=0, column=1, columnspan=2, sticky="w", padx=8)
+        self.seat_combo.bind('<<ComboboxSelected>>', self.update_seat_controls)
+        self.direction_combo = ttk.Combobox(seats, textvariable=self.seat_direction, values=("左側優先", "右側優先"), state="readonly", width=10)
+        self.direction_combo.grid(row=0, column=3, padx=8)
+        self.seat_check = ttk.Checkbutton(seats, text="同排連座", variable=self.seat_contiguous)
+        self.seat_check.grid(row=0, column=4, sticky="w")
+        self.inputs.extend([self.seat_combo, self.direction_combo, self.seat_check])
+        self.seat_ranges = {}
+        self.seat_range_inputs = []
+        for row, (axis, label) in enumerate((("row", "自訂前後 %（前 → 後）"), ("col", "自訂左右 %（左 → 右）")), 1):
+            ttk.Label(seats, text=label).grid(row=row, column=0, sticky="w", pady=5)
+            for col, bound in ((1, "start"), (3, "end")):
+                key = f"seat_{axis}_{bound}"
+                self.seat_ranges[key] = tk.StringVar()
+                entry = ttk.Spinbox(seats, from_=0, to=100, width=6, textvariable=self.seat_ranges[key])
+                entry.grid(row=row, column=col, padx=8, sticky="w")
+                self.seat_range_inputs.append(entry)
+                self.inputs.append(entry)
+            ttk.Label(seats, text="至").grid(row=row, column=2)
+        self.seat_demo_button = ttk.Button(seats, text="載入座位測試", command=self.seat_demo)
+        self.seat_demo_button.grid(row=2, column=4, sticky="e")
+        self.inputs.append(self.seat_demo_button)
         advanced.columnconfigure(1, weight=1)
         ttk.Label(advanced, text="多票種時可指定唯一票數 CSS；影城與同意 CSS 僅供本機示範使用。", wraplength=680).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 7))
         for row, (label, key) in enumerate((("影城欄位", "cinema_selector"), ("票數欄位", "tickets_selector"), ("同意欄位", "agree_selector")), 1):
@@ -114,6 +144,12 @@ class App(tk.Tk):
         for key, variable in self.variables.items():
             variable.set(str(getattr(settings, key)))
         self.agree.set(settings.agree)
+        self.seat_mode.set(next(label for label, value in SEAT_MODES.items() if value == settings.seat_mode))
+        self.seat_direction.set("左側優先" if settings.seat_direction == "left" else "右側優先")
+        self.seat_contiguous.set(settings.seat_contiguous)
+        for key, variable in self.seat_ranges.items():
+            variable.set(str(getattr(settings, key)))
+        self.update_seat_controls()
         self.session_position.set("第一場" if settings.session_position == "first" else "最後一場")
         stamp = parse_showtime(settings.showtime) if settings.showtime else None
         if stamp:
@@ -145,6 +181,27 @@ class App(tk.Tk):
         self.populate(Settings(url="demo://ticket", cinema="新竹大遠百威秀影城", tickets=2, agree=True))
         self.log("已載入本機示範設定，請按「儲存並執行」。")
 
+    def seat_demo(self):
+        self.populate(Settings(url="demo://seats", cinema="新竹大遠百威秀影城", tickets=2, seat_mode="middle"))
+        self.log("已載入本機座位測試，可調整偏好與張數後執行，不會連線購票。")
+
+    def update_seat_controls(self, event=None, running=False):
+        manual = self.seat_mode.get() == "手動選位"
+        self.seat_combo.configure(state="disabled" if running else "readonly")
+        self.direction_combo.configure(state="disabled" if running or manual else "readonly")
+        self.seat_check.configure(state="disabled" if running or manual else "normal")
+        for entry in self.seat_range_inputs:
+            entry.configure(state="normal" if not running and self.seat_mode.get() == "自訂範圍" else "disabled")
+
+    def selected_seat_settings(self):
+        try:
+            values = {key: int(variable.get()) for key, variable in self.seat_ranges.items()}
+        except ValueError:
+            raise ValueError("座位範圍請輸入 0～100 的整數。") from None
+        return dict(values, seat_mode=SEAT_MODES[self.seat_mode.get()],
+                    seat_direction="left" if self.seat_direction.get() == "左側優先" else "right",
+                    seat_contiguous=self.seat_contiguous.get())
+
     def log(self, text):
         self.logs.configure(state="normal")
         self.logs.insert("end", f"[{datetime.datetime.now():%H:%M:%S}] {text}\n")
@@ -156,6 +213,7 @@ class App(tk.Tk):
             widget.configure(state="disabled" if running else "normal")
         self.cinema_combo.configure(state="disabled" if running else "readonly")
         self.session_combo.configure(state="disabled" if running else "readonly")
+        self.update_seat_controls(running=running)
         for combo in self.date_combos.values():
             combo.configure(state="disabled" if running else "readonly")
         for widget in (self.retry_button, self.stop_button):
@@ -171,8 +229,9 @@ class App(tk.Tk):
             except ValueError:
                 raise ValueError("票數必須是 1～20 的整數。") from None
             settings = Settings(**values, agree=self.agree.get(),
+                                **self.selected_seat_settings(),
                                 session_position="first" if self.session_position.get() == "第一場" else "last")
-            if settings.url != "demo://ticket":
+            if settings.url not in ("demo://ticket", "demo://seats"):
                 settings.showtime = self.selected_showtime()
             if settings.cinema not in CINEMAS:
                 raise ValueError("請從下拉選單選擇影城。")
@@ -244,6 +303,18 @@ def smoke_test(output):
     app.busy(False)
     assert all(str(combo["state"]) == "readonly" for combo in app.date_combos.values())
     assert str(app.session_combo["state"]) == "readonly"
+    app.populate(Settings(seat_mode='custom', seat_row_start=40, seat_row_end=90,
+                          seat_direction='right', seat_contiguous=False))
+    values = app.selected_seat_settings()
+    assert values['seat_row_start'] == 40 and values['seat_row_end'] == 90
+    assert values['seat_direction'] == 'right' and not values['seat_contiguous']
+    app.busy(True)
+    assert all(str(entry['state']) == 'disabled' for entry in app.seat_range_inputs)
+    app.busy(False)
+    assert all(str(entry['state']) == 'normal' for entry in app.seat_range_inputs)
+    app.seat_demo()
+    assert app.variables['url'].get() == 'demo://seats'
+    assert app.selected_seat_settings()['seat_mode'] == 'middle'
     app.destroy()
     settings = Settings(url="demo://ticket", cinema="台中示範影城", tickets=3, agree=True)
     with sync_playwright() as pw:
@@ -275,9 +346,24 @@ def smoke_test(output):
             page.wait_for_url('https://sales.vscinemas.com.tw/**')
             select_quantity_and_continue(page, checkout, lambda _: None, threading.Event())
             assert '/Seats?count=3' in page.url and not page.is_closed()
+            from automation import select_seats_and_continue
+            page.goto(resource('seats_fixture.html').as_uri())
+            page.locator('#B-1').click()
+            page.locator('#B-2').click()
+            page.evaluate("""() => {
+                window.SelectSeats=['B-1','B-2'];
+                document.querySelectorAll('td[data-type="Empty"]').forEach(el => el.onclick=()=>{
+                    if(SelectSeats.indexOf(el.id)>0) return;
+                    if(SelectSeats.length===2) document.getElementById(SelectSeats.shift()).dataset.status='0';
+                    SelectSeats.push(el.id); el.dataset.status='5';
+                });
+            }""")
+            select_seats_and_continue(page, Settings(seat_mode='middle', tickets=2), lambda _: None, threading.Event())
+            assert '測試完成' in page.locator('#result').inner_text()
+            assert 'B-1' not in page.locator('#result').inner_text()
         finally:
             browser.close()
-    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser"]}), encoding="utf-8")
+    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser", "seat settings", "automatic seating and checkout"]}), encoding="utf-8")
 
 
 if __name__ == "__main__":

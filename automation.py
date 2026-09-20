@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import Error, sync_playwright
 from config import CINEMAS, parse_showtime
+from seating import READ_SEATS, plan_seats, seat_key
 
 
 def resource(name):
@@ -17,6 +18,8 @@ def resource(name):
 
 
 def target_url(settings):
+    if settings.url == "demo://seats":
+        return resource("seats_fixture.html").as_uri()
     return resource("demo.html").as_uri() if settings.url == "demo://ticket" else settings.url
 
 
@@ -337,7 +340,120 @@ def select_quantity_and_continue(page, settings, log, stop, timeout=30):
     next_button.click(timeout=5000)
     wait_booking(page, lambda: page.url != before or (not next_button.is_visible() and candidates.count() == 0),
                  stop, "下一個購票步驟", timeout)
-    log("已進入下一步。請在瀏覽器接手，程式保持執行且不再自動操作。")
+    log("已完成票數設定並進入下一步。")
+
+
+def select_seats_and_continue(page, settings, log, stop, timeout=30):
+    if settings.seat_mode == 'manual':
+        log('未設定自動選位，請在瀏覽器選位。')
+        return
+    tables = page.locator('#divSeatMap table.Seating-Area')
+
+    def read():
+        return tables.evaluate_all(READ_SEATS)
+
+    wait_booking(page, lambda: bool(read()), stop, '座位圖', timeout)
+    initial = read()
+    plan = plan_seats(initial, settings)
+    expected = {seat_key(s) for s in initial if s['selected']}
+    wanted = {seat_key(s) for s in plan}
+
+    def seat_cell(seat):
+        return tables.nth(seat['area']).locator('tr').nth(seat['gridRow']).locator(':scope > td, :scope > th').nth(seat['gridCol'])
+
+    def checked_seat(seat):
+        current = read()
+        if {seat_key(s) for s in current if s['selected']} != expected:
+            raise ValueError('已選座位發生變動，請手動確認。')
+        match = next((s for s in current if seat_key(s) == seat_key(seat)), None)
+        if not match or any(match[k] != seat[k] for k in ('row', 'label', 'backendRow', 'backendSeat', 'areaCode')):
+            raise ValueError('座位圖改變，請手動確認。')
+        return match
+
+    log('預計選取：' + '、'.join(f"{s['row']} 排 {s['label']} 號" for s in plan))
+    site_selection = page.evaluate('() => Array.isArray(window.SelectSeats) ? [...window.SelectSeats] : null')
+    if site_selection is not None:
+        target_ids = {s['id'] for s in plan}
+        if len(target_ids) != settings.tickets or not all(target_ids):
+            raise ValueError('座位 ID 不明確，請手動確認。')
+        def site_matches(ids):
+            return (page.evaluate('() => window.SelectSeats') == ids
+                    and {s['id'] for s in read() if s['selected']} == set(ids))
+
+        wait_booking(page, lambda: site_matches(page.evaluate('() => [...window.SelectSeats]')),
+                     stop, '網站選位清單與座位圖片同步', timeout)
+        site_selection = page.evaluate('() => [...window.SelectSeats]')
+        if len(site_selection) > settings.tickets or len(set(site_selection)) != len(site_selection):
+            raise ValueError('網站選位清單與設定張數不符，請手動確認。')
+        # The site's click handler appends a seat and evicts the oldest at capacity.
+        # An overlapping target can be evicted, so recompute missing targets each time.
+        for _ in range(settings.tickets * 2):
+            if set(site_selection) == target_ids:
+                break
+            if stop.is_set():
+                raise Cancelled()
+            seat = next(s for s in plan if s['id'] not in site_selection)
+            match = checked_seat(seat)
+            if not match['available'] or not site_matches(site_selection):
+                raise ValueError('預計座位已不可選或網站選位清單變動，請手動確認。')
+            after = site_selection[1:] if len(site_selection) == settings.tickets else list(site_selection)
+            after.append(seat['id'])
+            log(f"正在點選 {seat['row']} 排 {seat['label']} 號（網站將自動替換最早的預選座位）。")
+            seat_cell(seat).click(timeout=5000)
+            wait_booking(page, lambda: site_matches(after), stop,
+                         f"網站確認替換座位 {seat['row']}-{seat['label']}", timeout)
+            site_selection = after
+            expected = {seat_key(s) for s in read() if s['selected']}
+            log('網站目前選位：' + '、'.join(site_selection))
+        if set(site_selection) != target_ids:
+            raise ValueError('網站未完成指定座位替換，請手動確認。')
+        # All desired seats are now selected; the toggle adapter below has no work.
+        initial = read()
+    for seat in initial:
+        if not seat['selected'] or seat_key(seat) in wanted:
+            continue
+        if stop.is_set():
+            raise Cancelled()
+        checked_seat(seat)
+        log(f"正在取消預選 {seat['row']} 排 {seat['label']} 號。")
+        seat_cell(seat).click(timeout=5000)
+        expected.remove(seat_key(seat))
+        wait_booking(page, lambda: {seat_key(s) for s in read() if s['selected']} == expected,
+                     stop, f"取消預選 {seat['row']}-{seat['label']}（未確認時請手動接手）", timeout)
+        log(f"已取消預選 {seat['row']} 排 {seat['label']} 號。")
+    for seat in plan:
+        if stop.is_set():
+            raise Cancelled()
+        match = checked_seat(seat)
+        if seat_key(seat) in expected:
+            log(f"保留預選 {seat['row']} 排 {seat['label']} 號。")
+            continue
+        if not match['available']:
+            raise ValueError('預計座位已不可選或座位圖改變，請手動確認。')
+        log(f"正在點選 {seat['row']} 排 {seat['label']} 號。")
+        seat_cell(seat).click(timeout=5000)
+        expected.add(seat_key(seat))
+        wait_booking(page, lambda: {seat_key(s) for s in read() if s['selected']} == expected,
+                     stop, f"網站確認 {seat['row']}-{seat['label']}（未確認時請手動接手）", timeout)
+        log(f"已選取 {seat['row']} 排 {seat['label']} 號。")
+    button = page.locator('button#btnCheckOut')
+    wait_booking(page, lambda: button.count() == 1 and button.is_visible() and button.is_enabled()
+                 and button.get_attribute('aria-disabled') != 'true'
+                 and 'disabled' not in (button.get_attribute('class') or '').split(), stop, '選位繼續按鈕', timeout)
+    if {seat_key(s) for s in read() if s['selected']} != expected or len(expected) != settings.tickets:
+        raise ValueError('選取座位與設定張數不符，請手動確認。')
+    if stop.is_set():
+        raise Cancelled()
+    if site_selection is not None and not site_matches(site_selection):
+        raise ValueError('送出前網站選位清單發生變動，請手動確認。')
+    before = page.url
+    log('已核對選取座位與張數，正在點擊繼續並等待網站驗證。')
+    button.click(timeout=5000)
+    wait_booking(page, lambda: page.url != before or (not button.is_visible() and not read()),
+                 stop, '選位後的下一步（不重複提交）', timeout)
+    if urlsplit(page.url).path.rstrip('/').lower().endswith('/error'):
+        raise ValueError('網站選位驗證或保留座位失敗，已進入錯誤頁，請手動確認。')
+    log('已完成選位並點擊繼續，後續流程請在瀏覽器接手。')
 
 
 class TicketFlow:
@@ -367,13 +483,18 @@ class TicketFlow:
                         continue
                     self.post_pending = False  # At most one continue click per attempt.
                     select_quantity_and_continue(candidate, self.settings, lambda s: self.emit('log', s), self.stop)
-                    self.emit('handoff', '已完成票數與繼續，請在瀏覽器接手')
+                    if self.settings.seat_mode != 'manual':
+                        self.emit('status', '正在依偏好選位…')
+                        select_seats_and_continue(candidate, self.settings, lambda s: self.emit('log', s), self.stop)
+                        self.emit('handoff', '已完成選位與繼續，後續請在瀏覽器接手')
+                    else:
+                        self.emit('handoff', '已完成票數與繼續，請在瀏覽器接手選位')
                     return
             except Cancelled:
                 raise
             except Exception as exc:
                 self.post_pending = False
-                self.emit('status', '流程暫停，瀏覽器保留供手動操作')
+                self.emit('handoff', '流程暫停，瀏覽器保留供手動操作')
                 self.emit('log', f'未能完成購票設定：{exc}')
             return
         if not self.pending:
@@ -475,7 +596,7 @@ class BrowserWorker(threading.Thread):
                         page.goto(target_url(self.settings), wait_until="domcontentloaded", timeout=30000)
                     except Exception as exc:
                         self.emit("log", f"載入網站未完成：{exc}")
-                    demo = self.settings.url == "demo://ticket"
+                    demo = self.settings.url in ("demo://ticket", "demo://seats")
                     pending = demo
                     flow = TicketFlow(self.settings, self.emit, self.stop_event)
                     if not demo:
@@ -493,8 +614,12 @@ class BrowserWorker(threading.Thread):
                         if pending:
                             self.emit("status", "正在套用購票設定…")
                             try:
-                                apply_settings(page, self.settings, lambda s: self.emit("log", s), self.stop_event)
-                                self.emit("status", "設定已套用，請在瀏覽器繼續操作")
+                                if self.settings.url == 'demo://seats':
+                                    select_seats_and_continue(page, self.settings, lambda s: self.emit('log', s), self.stop_event)
+                                    self.emit('handoff', '座位測試完成，請在瀏覽器查看結果')
+                                else:
+                                    apply_settings(page, self.settings, lambda s: self.emit("log", s), self.stop_event)
+                                    self.emit("status", "設定已套用，請在瀏覽器繼續操作")
                                 self.emit("log", "已完成表單設定；瀏覽器保持開啟。")
                             except Cancelled:
                                 break

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant"><meta charset="utf-8"><title>座位測試</title>
+<style>
+body { font: 16px "Microsoft JhengHei UI", sans-serif; margin: 32px; color: #202d30; background: #f5f7f7; }
+main { max-width: 840px; margin: auto; } h1 { font-size: 24px; }
+.screen { text-align: center; padding: 12px; border-top: 5px solid #73868a; margin-bottom: 20px; }
+table { width: 100%; table-layout: fixed; border-spacing: 5px; }
+td { height: 28px; text-align: center; font-size: 12px; }
+td[data-name] { background: #d9eae3; border: 1px solid #728d80; cursor: pointer; border-radius: 4px; }
+td[data-status="3"] { background: #b8bbbd; cursor: default; }
+td[data-status="5"] { background: #d94566; color: white; }
+td[data-type="Special"] { background: #c9dbea; cursor: default; }
+button { padding: 10px 24px; background: #246455; color: white; border: 0; cursor: pointer; }
+#selected { min-height: 28px; } .map { overflow-x: auto; } table { min-width: 600px; }
+</style>
+<main><h1>本機座位測試</h1><div id="select-seats-container">
+<div class="screen">銀幕</div><div id="divSeatMap" class="map">
+<table class="Seating-Area" data-area-number="1"><tbody></tbody></table></div>
+<p id="selected">尚未選位</p><button id="btnCheckOut" type="button">繼續 →</button>
+</div><p id="result"></p></main>
+<script>
+const body = document.querySelector('tbody');
+for (let r = 0; r < 12; r++) {
+    const tr = body.insertRow();
+    for (let c = 0; c < 20; c++) {
+        const td = tr.insertCell();
+        if (r === 3 || c === 4 || c === 15 || (r === 0 && (c < 3 || c > 16))) continue;
+        const row = String.fromCharCode(65 + r - (r > 3 ? 1 : 0));
+        const label = String(c + 1 - (c > 4 ? 1 : 0) - (c > 15 ? 1 : 0));
+        const sold = (r === 5 && c === 9) || (r === 9 && c === 10);
+        td.id = row + '-' + label;
+        Object.assign(td.dataset, {name: row, col: label, row: String(12-r), seatnum: String(20-c),
+            areanum: '1', areacode: '0000000001', type: sold ? 'Sold' : 'Empty', status: sold ? '3' : '0'});
+        td.textContent = row + '-' + label;
+        td.onclick = () => {
+            if (td.dataset.type !== 'Empty') return;
+            td.dataset.status = td.dataset.status === '5' ? '0' : '5';
+            document.querySelector('#selected').textContent = selected().join('、') || '尚未選位';
+        };
+    }
+}
+function selected() { return [...document.querySelectorAll('td[data-status="5"]')].map(td => td.id); }
+document.querySelector('#btnCheckOut').onclick = () => {
+    const seats = selected();
+    if (!seats.length) return;
+    document.querySelector('#result').textContent = '測試完成：' + seats.join('、');
+    document.querySelector('#select-seats-container').remove();
+};
+</script></html>

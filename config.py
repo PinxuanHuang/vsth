@@ -24,6 +24,9 @@ CINEMAS = {
     "高雄大遠百威秀影城": "6|KS",
 }
 
+SEAT_MODES = {"手動選位": "manual", "中間排中間": "middle", "後排中間": "back",
+              "前排中間": "front", "自訂範圍": "custom"}
+
 
 def parse_showtime(value):
     if not isinstance(value, str):
@@ -48,8 +51,26 @@ class Settings:
     agree_selector: str = ""
     showtime: str = ""
     session_position: str = "first"
+    seat_mode: str = "manual"
+    seat_row_start: int = 0
+    seat_row_end: int = 100
+    seat_col_start: int = 25
+    seat_col_end: int = 75
+    seat_direction: str = "left"
+    seat_contiguous: bool = True
+
+    def validate_seats(self):
+        if self.seat_mode not in SEAT_MODES.values():
+            raise ValueError("座位偏好格式錯誤。")
+        if self.seat_direction not in ("left", "right") or type(self.seat_contiguous) is not bool:
+            raise ValueError("選位方向或連座設定格式錯誤。")
+        for axis in ("row", "col"):
+            start, end = (getattr(self, f"seat_{axis}_{bound}") for bound in ("start", "end"))
+            if type(start) is not int or type(end) is not int or not 0 <= start < end <= 100:
+                raise ValueError("座位範圍須為 0～100 的整數，起點必須小於終點。")
 
     def validate(self):
+        self.validate_seats()
         if self.showtime:
             parse_showtime(self.showtime)
         elif not isinstance(self.showtime, str):
@@ -60,7 +81,7 @@ class Settings:
             if not isinstance(getattr(self, name), str):
                 raise ValueError("設定文字格式錯誤。")
         parts = urlsplit(self.url)
-        if self.url != "demo://ticket" and (
+        if self.url not in ("demo://ticket", "demo://seats") and (
             parts.scheme not in ("http", "https") or not parts.hostname
             or parts.username or parts.password
         ):
