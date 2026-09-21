@@ -19,6 +19,6 @@ $env:TCL_LIBRARY = Join-Path $tclStage 'tcl8.6'
 $env:TK_LIBRARY = Join-Path $tclStage 'tk8.6'
 & ./.venv/Scripts/python.exe -c 'import tkinter; root = tkinter.Tk(); root.withdraw(); root.destroy()'
 if ($LASTEXITCODE -ne 0) { throw 'Tkinter check failed; repair the Python Tcl/Tk installation.' }
-& ./.venv/Scripts/python.exe -m PyInstaller --noconfirm --clean --distpath $OutputDirectory --onefile --windowed --name MovieTicketAssistant --add-data 'demo.html;.' --add-data 'flow_fixture.html;.' --add-data 'session_fixture.html;.' --add-data 'booking_fixture.html;.' --add-data 'quantity_fixture.html;.' --add-data 'seats_fixture.html;.' app.py
+& ./.venv/Scripts/python.exe -m PyInstaller --noconfirm --clean --distpath $OutputDirectory --onefile --windowed --name MovieTicketAssistant --add-data 'demo.html;.' --add-data 'flow_fixture.html;.' --add-data 'session_fixture.html;.' --add-data 'booking_fixture.html;.' --add-data 'quantity_fixture.html;.' --add-data 'seats_fixture.html;.' --add-data 'checkout_login_fixture.html;.' app.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed.' }
 Write-Host "Ready: $OutputDirectory/MovieTicketAssistant.exe (requires Microsoft Edge)"

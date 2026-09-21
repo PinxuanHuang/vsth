@@ -1,12 +1,12 @@
 # 電影購票助手
 
-本次自動選位修正版位於 `dist/seat-selection-v3/MovieTicketAssistant.exe`，依實際網站的 `SelectSeats` 先進先出機制替換預選座位。
+本次結帳登入版位於 `dist/checkout-login/MovieTicketAssistant.exe`，自動選位並繼續後，可依設定登入結帳會員；付款由使用者操作。
 
 繁體中文 Windows 桌面程式，使用 Python 3.11、Tkinter 與 Playwright。目標為 Windows 10／11 x64，電腦需已安裝 Microsoft Edge；執行打包版本不需安裝 Python。
 
 ## 使用
 
-1. 開啟 `dist/seat-selection-v3/MovieTicketAssistant.exe`（本次新版）。
+1. 開啟 `dist/checkout-login/MovieTicketAssistant.exe`（本次新版）。
 2. 輸入起始網址，從下拉選單選影城，選擇場次的年／月／日及「第一場／最後一場」，設定票數與是否自動勾選「我同意」。日期必須有效，日選單會隨月份與閏年調整。
 3. 按「儲存並執行」，程式會開啟獨立 Edge 視窗，顯示「等待你手動進入購票專區」。
 4. 自行點選要購票的專區。進入威秀的 `vsTicketingSP` 或 `vsTicketingSP數字` 購票頁後，程式會自動選影城，再點電影清單第一項，完成後保留瀏覽器。路徑取自實際進入的專區，不固定為第一專區；一般 `vsTicketing` 入口仍等待你選擇搶票專區。原分頁導覽與另開分頁皆支援，不需再按按鈕。
@@ -15,7 +15,16 @@
 
 ## 目前範圍與網站適配
 
-目前實作影城、第一部電影、指定場次、一般票種規定、票數、選位偏好與「繼續」操作。選位後的付款等流程仍由使用者接手。請保持主程式開啟，只有明確按「停止並關閉瀏覽器」或關閉主程式時才結束瀏覽器工作階段。
+目前實作影城、第一部電影、指定場次、一般票種規定、票數、選位偏好、「繼續」及結帳會員登入。付款方式、付款送出及額外驗證由使用者接手。請保持主程式開啟，只有明確按「停止並關閉瀏覽器」或關閉主程式時才結束瀏覽器工作階段。
+
+### 結帳會員登入
+
+- 在「會員登入」頁籤填入帳號（信箱）與密碼。密碼保留原始字元（包含前後空白），預設遮蔽，可勾選「顯示密碼」。未設定完整帳密時，遇到登入表單會交由使用者接手。
+- 自動選位並按繼續後，等待新頁載入，再短暫等候登入表單出現。只辨識目前威秀購票 HTTPS 網域同來源、POST 方法、action 路徑以 `/Home/VieShowLoginForCheckout` 結尾的可見表單，不寫死 `LiveTicketD4`／`VieShowTicketD4` 前綴或 HTML ID。
+- 該表單必須具有唯一 `input[name="UserName"][type="email"]`、`input[name="Password"][type="password"]` 與唯一可見的 submit 按鈕。只在該表單填值並點擊原送出按鈕，保留網站隱藏欄位及驗證，不操作頁首其他登入表單。
+- 沒有這個表單時不填帳密、不送出任何付款操作，直接交由使用者操作後續頁面。出現多個表單、欄位不明確、長度不符、登入失敗、逾時或需額外驗證時，也保留頁面供手動確認。每次流程最多送出一次登入，不自動重試。
+- 帳號與密碼不寫入日誌，登入操作的原始工具例外也不直接顯示，避免帶出填寫值。密碼以 Windows DPAPI 加密後存入設定檔，只能由對應 Windows 使用者解密；清空密碼並儲存即可刪除已存密碼。瀏覽器登入 cookie 不保存。
+- 手動選位模式仍在選位頁交由使用者接手，不會在手動接手後繼續監控付款頁。
 
 ### 座位偏好（測試版）
 
@@ -31,7 +40,7 @@
 - `data-status` 在原站點擊後不會更新，因此選取狀態依圖片核對。選足張數、網站清單正確且繼續按鈕沒有 `disabled` class 時，才點擊 `#btnCheckOut`，由網站原事件執行 CheckSeats、ReserveSeats 及下一步導頁。失敗則保留頁面且不重複提交；導至 Error 頁不會回報成功。
 - 可按「載入座位測試」，調整偏好與張數後「儲存並執行」，在本機座位圖驗證結果；此模式不連線購票。切回真實流程前需填回購票網址、影城與日期。
 
-建置：`powershell -ExecutionPolicy Bypass -File .\build.ps1 -OutputDirectory dist/seat-selection-v3`。
+建置：`powershell -ExecutionPolicy Bypass -File .\build.ps1 -OutputDirectory dist/checkout-login`。
 
 選位回歸測試包含使用者提供的原站 click handler，以及頁面引用的 jQuery 1.11.1（`tests/jquery.site.min.js`，保留原始授權標頭）。這些測試只在本機執行，不對真實網站送出訂票。
 
@@ -84,7 +93,7 @@
 
 舊設定若含清單外影城會清空影城欄位，請重新選擇。「載入示範設定」為舊版本機表單範例，可測試影城／票數／同意欄位；影城與同意 CSS 僅供該示範使用，票數 CSS 同時適用真實購票頁。
 
-設定自動存於 `%APPDATA%/MovieTicketAssistant/settings.json`，不保存登入密碼或瀏覽器登入狀態。設定檔以明文保存網址，請勿輸入帶有私人登入憑證的連結。執行時鎖定設定，修改前請先停止。停止可能等待目前操作逾時（導覽最長 30 秒）。
+設定自動存於 `%APPDATA%/MovieTicketAssistant/settings.json`；登入密碼使用 Windows DPAPI 加密儲存，不保存瀏覽器登入 cookie。網址與登入信箱以文字保存。執行時鎖定設定，修改前請先停止。停止可能等待目前操作逾時（導覽最長 30 秒）。
 
 ## 開發與打包
 

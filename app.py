@@ -36,7 +36,7 @@ class App(tk.Tk):
         frame.columnconfigure(1, weight=1)
         ttk.Label(frame, text="電影購票助手", font=("Microsoft JhengHei UI", 23, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Label(frame, text="手動進入購票專區後，自動選影城、電影與指定場次。", foreground="#52627a").grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 22))
-        self.variables = {name: tk.StringVar() for name in ("url", "cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector")}
+        self.variables = {name: tk.StringVar() for name in ("url", "cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector", "login_email", "login_password")}
         self.agree = tk.BooleanVar()
         self.inputs = []
         for row, (label, key) in enumerate((("購票網址", "url"), ("影城名稱", "cinema"), ("購票張數", "tickets")), 2):
@@ -82,6 +82,21 @@ class App(tk.Tk):
         advanced = ttk.Frame(tabs, padding=12)
         tabs.add(seats, text="座位偏好")
         tabs.add(advanced, text="進階欄位設定")
+        member = ttk.Frame(tabs, padding=12)
+        member.columnconfigure(1, weight=1)
+        tabs.add(member, text="會員登入")
+        for row, (label, key) in enumerate((("帳號（信箱）", "login_email"), ("密碼", "login_password"))):
+            ttk.Label(member, text=label).grid(row=row, column=0, sticky="w", padx=(0, 15), pady=5)
+            entry = ttk.Entry(member, textvariable=self.variables[key], show='*' if key == 'login_password' else '')
+            entry.grid(row=row, column=1, sticky="ew", pady=5)
+            self.inputs.append(entry)
+            if key == 'login_password':
+                self.password_entry = entry
+        self.show_password = tk.BooleanVar(value=False)
+        reveal = ttk.Checkbutton(member, text='顯示密碼', variable=self.show_password,
+                                 command=lambda: self.password_entry.configure(show='' if self.show_password.get() else '*'))
+        reveal.grid(row=2, column=1, sticky='w')
+        self.inputs.append(reveal)
         self.seat_mode = tk.StringVar(value="手動選位")
         self.seat_direction = tk.StringVar(value="左側優先")
         self.seat_contiguous = tk.BooleanVar(value=True)
@@ -141,6 +156,8 @@ class App(tk.Tk):
         self.after_id = self.after(100, self.poll)
 
     def populate(self, settings):
+        self.show_password.set(False)
+        self.password_entry.configure(show='*')
         for key, variable in self.variables.items():
             variable.set(str(getattr(settings, key)))
         self.agree.set(settings.agree)
@@ -223,7 +240,8 @@ class App(tk.Tk):
         if self.worker and self.worker.is_alive():
             return
         try:
-            values = {key: variable.get().strip() for key, variable in self.variables.items()}
+            values = {key: variable.get() if key == 'login_password' else variable.get().strip()
+                      for key, variable in self.variables.items()}
             try:
                 values["tickets"] = int(values["tickets"])
             except ValueError:
@@ -315,6 +333,20 @@ def smoke_test(output):
     app.seat_demo()
     assert app.variables['url'].get() == 'demo://seats'
     assert app.selected_seat_settings()['seat_mode'] == 'middle'
+    app.populate(Settings(login_email='smoke@example.com', login_password=' local-test-pass '))
+    assert app.variables['login_password'].get() == ' local-test-pass '
+    assert app.password_entry['show'] == '*'
+    app.busy(True)
+    assert str(app.password_entry['state']) == 'disabled'
+    app.busy(False)
+    assert str(app.password_entry['state']) == 'normal'
+    import tempfile
+    with tempfile.TemporaryDirectory() as temporary:
+        credential_path = Path(temporary) / 'settings.json'
+        credential_settings = Settings(url='demo://ticket', cinema='test', login_email='smoke@example.com', login_password=' local-test-pass ')
+        save_settings(credential_settings, credential_path)
+        assert load_settings(credential_path) == credential_settings
+        assert credential_settings.login_password not in credential_path.read_text(encoding='utf-8')
     app.destroy()
     settings = Settings(url="demo://ticket", cinema="台中示範影城", tickets=3, agree=True)
     with sync_playwright() as pw:
@@ -361,9 +393,25 @@ def smoke_test(output):
             select_seats_and_continue(page, Settings(seat_mode='middle', tickets=2), lambda _: None, threading.Event())
             assert '測試完成' in page.locator('#result').inner_text()
             assert 'B-1' not in page.locator('#result').inner_text()
+            from automation import login_for_checkout
+            login_posts = []
+            def login_response(route):
+                if route.request.method == 'POST':
+                    login_posts.append(route.request.url)
+                    body = '<h1>Payment</h1><button id="payment" onclick="window.paid=true">Pay</button>'
+                else:
+                    body = resource('checkout_login_fixture.html').read_text(encoding='utf-8')
+                route.fulfill(body=body, content_type='text/html')
+            page.route('https://sales.vscinemas.com.tw/**', login_response)
+            page.goto('https://sales.vscinemas.com.tw/LiveTicketD4/Home/OrderConfirm')
+            assert login_for_checkout(page, credential_settings, lambda _: None, threading.Event()) == 'submitted'
+            assert len(login_posts) == 1 and page.locator('#payment').is_visible()
+            assert page.evaluate('window.paid') is None
+            assert login_for_checkout(page, credential_settings, lambda _: None, threading.Event(), discovery_timeout=0) == 'not_required'
+            assert len(login_posts) == 1
         finally:
             browser.close()
-    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser", "seat settings", "automatic seating and checkout"]}), encoding="utf-8")
+    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser", "seat settings", "automatic seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
 
 
 if __name__ == "__main__":
