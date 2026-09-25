@@ -460,7 +460,121 @@ def select_seats_and_continue(page, settings, log, stop, timeout=30):
                  stop, '選位後的下一步（不重複提交）', timeout)
     if urlsplit(page.url).path.rstrip('/').lower().endswith('/error'):
         raise ValueError('網站選位驗證或保留座位失敗，已進入錯誤頁，請手動確認。')
-    log('已完成選位並點擊繼續，後續流程請在瀏覽器接手。')
+    log('已完成選位並進入下一步。')
+
+
+class CheckoutLoginError(ValueError):
+    """A credential-free diagnostic safe to display in the application log."""
+
+
+def checkout_login_form(page):
+    forms = page.locator('form')
+    metadata = forms.evaluate_all("els => els.map((el, index) => ({index, action: el.action, method: el.method}))")
+    candidates = []
+    origin = urlsplit(page.url)
+    for item in metadata:
+        action = urlsplit(item['action'])
+        if not action.path.rstrip('/').lower().endswith('/home/vieshowloginforcheckout'):
+            continue
+        form = forms.nth(item['index'])
+        if not form.is_visible():
+            continue
+        if (origin.scheme != 'https' or origin.hostname != 'sales.vscinemas.com.tw'
+                or action.scheme != origin.scheme or action.netloc.lower() != origin.netloc.lower()
+                or action.username or action.password or item['method'].lower() != 'post'):
+            raise CheckoutLoginError('結帳登入表單的提交位置或方法不符，請手動確認。')
+        candidates.append(form)
+    if len(candidates) > 1:
+        raise CheckoutLoginError('頁面出現多個結帳登入表單，請手動確認。')
+    return candidates[0] if candidates else None
+
+
+def login_for_checkout(page, settings, log, stop, timeout=30, discovery_timeout=2):
+    """Submit only the checkout login form, once; never operate payment controls."""
+    try:
+        if stop.is_set():
+            raise Cancelled()
+        page.wait_for_load_state('domcontentloaded', timeout=timeout * 1000)
+        deadline = time.monotonic() + min(discovery_timeout, timeout)
+        while True:
+            if stop.is_set():
+                raise Cancelled()
+            form = checkout_login_form(page)
+            if form is not None:
+                break
+            if time.monotonic() >= deadline:
+                log('未出現結帳登入表單，保留目前頁面，付款流程請手動操作。')
+                return 'not_required'
+            page.wait_for_timeout(100)
+        if not settings.login_email or not settings.login_password:
+            log('已發現結帳登入表單，但尚未設定完整帳密，請在瀏覽器手動登入。')
+            return 'missing_credentials'
+        email = form.locator('input[name="UserName"]')
+        password = form.locator('input[name="Password"]')
+        for field, kind, value in ((email, 'email', settings.login_email),
+                                   (password, 'password', settings.login_password)):
+            if (field.count() != 1 or (field.get_attribute('type') or '').lower() != kind
+                    or not field.is_visible() or not field.is_editable()
+                    or field.get_attribute('form') is not None):
+                raise CheckoutLoginError('結帳登入欄位不明確或無法輸入，請手動確認。')
+            limit = field.evaluate('el => el.maxLength')
+            if limit >= 0 and len(value.encode('utf-16-le')) // 2 > limit:
+                raise CheckoutLoginError('設定的登入資料超過網站欄位長度限制，請重新設定。')
+        submit = form.locator('button[type="submit"], button:not([type]), input[type="submit"]').filter(visible=True)
+        if submit.count() != 1:
+            raise CheckoutLoginError('結帳登入的送出按鈕不明確，請手動確認。')
+        if (submit.get_attribute('form') is not None or submit.get_attribute('formaction') is not None
+                or submit.get_attribute('formmethod') is not None
+                or submit.get_attribute('formtarget') not in (None, '', '_self')
+                or form.get_attribute('target') not in (None, '', '_self')):
+            raise CheckoutLoginError('結帳登入按鈕有額外提交設定，請手動確認。')
+        wait_booking(page, lambda: submit.is_enabled()
+                     and submit.get_attribute('aria-disabled') != 'true'
+                     and 'disabled' not in (submit.get_attribute('class') or '').split(),
+                     stop, '結帳登入按鈕', timeout)
+
+        def errors(current):
+            texts = current.locator('.validation-summary-errors, .field-validation-error, .alert-danger, [role="alert"]').filter(visible=True).all_text_contents()
+            return tuple(text.strip() for text in texts if text.strip() not in ('', '*'))
+
+        initial_errors = errors(form)
+        destination = form.evaluate('el => el.action')
+        if stop.is_set():
+            raise Cancelled()
+        email.fill(settings.login_email, timeout=5000)
+        if stop.is_set():
+            raise Cancelled()
+        password.fill(settings.login_password, timeout=5000)
+        if not email.evaluate('el => el.checkValidity()') or not password.evaluate('el => el.checkValidity()'):
+            raise CheckoutLoginError('登入資料未通過網站欄位驗證，請手動確認。')
+        if stop.is_set():
+            raise Cancelled()
+        if checkout_login_form(page) is None or form.evaluate('el => el.action') != destination:
+            raise CheckoutLoginError('填寫後結帳登入表單已改變，請手動確認。')
+        if any(submit.get_attribute(name) is not None for name in ('form', 'formaction', 'formmethod', 'formtarget')):
+            raise CheckoutLoginError('填寫後登入按鈕的提交設定已改變，請手動確認。')
+        log('已填入會員登入欄位，正在送出結帳登入表單。')
+        submit.click(timeout=5000)
+
+        def finished():
+            if urlsplit(page.url).path.rstrip('/').lower().endswith('/error'):
+                raise CheckoutLoginError('登入後進入網站錯誤頁，請手動確認。')
+            current = checkout_login_form(page)
+            if current is None:
+                return True
+            current_errors = errors(current)
+            if current_errors and current_errors != initial_errors:
+                raise CheckoutLoginError('網站顯示登入驗證錯誤，請在瀏覽器確認；不會重複送出。')
+            return False
+
+        wait_booking(page, finished, stop, '結帳登入結果', timeout)
+        log('結帳登入表單已送出，後續付款或額外驗證請在瀏覽器操作。')
+        return 'submitted'
+    except (Cancelled, CheckoutLoginError):
+        raise
+    except Exception:
+        # Playwright error messages can include fill values; never expose them.
+        raise CheckoutLoginError('登入操作未完成或等待逾時，請在瀏覽器確認；不會自動重試。') from None
 
 
 class TicketFlow:
@@ -493,7 +607,10 @@ class TicketFlow:
                     if self.settings.seat_mode != 'manual':
                         self.emit('status', '正在依偏好選位…')
                         select_seats_and_continue(candidate, self.settings, lambda s: self.emit('log', s), self.stop)
-                        self.emit('handoff', '已完成選位與繼續，後續請在瀏覽器接手')
+                        self.emit('status', '正在檢查結帳會員登入…')
+                        outcome = login_for_checkout(candidate, self.settings, lambda s: self.emit('log', s), self.stop)
+                        self.emit('handoff', '請在瀏覽器手動登入並操作付款' if outcome == 'missing_credentials'
+                                  else '已完成自動流程，付款或額外驗證請在瀏覽器操作')
                     else:
                         self.emit('handoff', '已完成票數與繼續，請在瀏覽器接手選位')
                     return

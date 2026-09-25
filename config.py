@@ -1,11 +1,12 @@
-"""Validated, versioned desktop settings; no browser credentials are persisted."""
+"""Validated desktop settings with Windows-protected login credentials."""
 import json
 import os
 import re
 from datetime import datetime
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
+from credentials import protect_password, unprotect_password
 
 
 CINEMAS = {
@@ -77,6 +78,8 @@ class Settings:
     seat_direction: str = "left"
     seat_contiguous: bool = True
     seat_preferred: str = ""
+    login_email: str = field(default='', repr=False)
+    login_password: str = field(default='', repr=False)
 
     def validate_seats(self):
         parse_preferred_seats(self.seat_preferred)
@@ -91,6 +94,10 @@ class Settings:
 
     def validate(self):
         self.validate_seats()
+        if not isinstance(self.login_email, str) or not isinstance(self.login_password, str):
+            raise ValueError('會員登入設定格式錯誤。')
+        if self.login_email and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', self.login_email):
+            raise ValueError('會員帳號請輸入有效的電子郵件地址。')
         if self.showtime:
             parse_showtime(self.showtime)
         elif not isinstance(self.showtime, str):
@@ -129,6 +136,7 @@ def load_settings(path=None):
         parsed = datetime.strptime(stamp, "%Y-%m-%d %H:%M")
         if parsed.strftime("%Y-%m-%d %H:%M") == stamp:
             data["showtime"] = parsed.strftime("%Y-%m-%d")
+    data['login_password'] = unprotect_password(data.get('protected_login_password', ''))
     result = Settings(**{k: v for k, v in data.items() if k in Settings.__dataclass_fields__})
     result.validate()
     return result
@@ -139,5 +147,7 @@ def save_settings(settings, path=None):
     path = path or settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps(asdict(settings), ensure_ascii=False, indent=2), encoding="utf-8")
+    data = asdict(settings)
+    data['protected_login_password'] = protect_password(data.pop('login_password'))
+    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
