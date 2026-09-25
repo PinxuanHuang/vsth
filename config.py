@@ -1,6 +1,7 @@
 """Validated, versioned desktop settings; no browser credentials are persisted."""
 import json
 import os
+import re
 from datetime import datetime
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -26,6 +27,23 @@ CINEMAS = {
 
 SEAT_MODES = {"手動選位": "manual", "中間排中間": "middle", "後排中間": "back",
               "前排中間": "front", "自訂範圍": "custom"}
+
+
+def parse_preferred_seats(value):
+    if not isinstance(value, str):
+        raise ValueError("優先座位請輸入文字，例如 N7,N8,N9,M7,M8,M9。")
+    result = []
+    for token in value.replace("，", ",").split(","):
+        token = token.strip().upper()
+        if not token:
+            continue
+        match = re.fullmatch(r"([A-Z]+)-?([0-9]+)", token)
+        if not match or int(match[2]) < 1:
+            raise ValueError(f"優先座位「{token}」格式錯誤，請以逗號分隔排別與座號，例如 N7,N8,N9。")
+        seat = f"{match[1]}{int(match[2])}"
+        if seat not in result:
+            result.append(seat)
+    return result
 
 
 def parse_showtime(value):
@@ -58,8 +76,10 @@ class Settings:
     seat_col_end: int = 75
     seat_direction: str = "left"
     seat_contiguous: bool = True
+    seat_preferred: str = ""
 
     def validate_seats(self):
+        parse_preferred_seats(self.seat_preferred)
         if self.seat_mode not in SEAT_MODES.values():
             raise ValueError("座位偏好格式錯誤。")
         if self.seat_direction not in ("left", "right") or type(self.seat_contiguous) is not bool:
