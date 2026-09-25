@@ -10,6 +10,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from automation import BrowserWorker, apply_settings, resource, select_cinema_and_first_movie, select_showtime, target_url, submit_normal_booking, select_quantity_and_continue
 from config import CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
+from ticket_types import TICKET_TYPES, get_ticket_type
 
 
 class App(tk.Tk):
@@ -38,6 +39,7 @@ class App(tk.Tk):
         ttk.Label(frame, text="手動進入購票專區後，自動選影城、電影與指定場次。", foreground="#52627a").grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 22))
         self.variables = {name: tk.StringVar() for name in ("url", "cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector", "login_email", "login_password")}
         self.agree = tk.BooleanVar()
+        self.ticket_type = tk.StringVar()
         self.inputs = []
         for row, (label, key) in enumerate((("購票網址", "url"), ("影城名稱", "cinema"), ("購票張數", "tickets")), 2):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 18), pady=7)
@@ -45,7 +47,17 @@ class App(tk.Tk):
                 entry = ttk.Combobox(frame, textvariable=self.variables[key], values=["請選擇影城", *CINEMAS], state="readonly", height=15)
                 self.cinema_combo = entry
             elif key == "tickets":
-                entry = ttk.Spinbox(frame, from_=1, to=20, textvariable=self.variables[key], width=8)
+                ticket_frame = ttk.Frame(frame)
+                ticket_frame.grid(row=row, column=1, columnspan=2, sticky="ew", pady=7)
+                ticket_frame.columnconfigure(2, weight=1)
+                entry = ttk.Spinbox(ticket_frame, from_=1, to=20, textvariable=self.variables[key], width=5)
+                entry.grid(row=0, column=0, sticky="w")
+                ttk.Label(ticket_frame, text="購票票種").grid(row=0, column=1, padx=(14, 8))
+                self.ticket_combo = ttk.Combobox(ticket_frame, textvariable=self.ticket_type,
+                                                values=[kind.label for kind in TICKET_TYPES.values()], state="readonly", width=30)
+                self.ticket_combo.grid(row=0, column=2, sticky="ew")
+                self.inputs.extend([entry, self.ticket_combo])
+                continue
             else:
                 entry = ttk.Entry(frame, textvariable=self.variables[key])
             entry.grid(row=row, column=1, columnspan=2, sticky="ew", pady=7)
@@ -132,7 +144,7 @@ class App(tk.Tk):
         ttk.Label(seats, text="例如 N7,N8,N9,M7,M8,M9；自動選位時依序優先，無可行組合則沿用原規則。",
                   wraplength=660).grid(row=4, column=0, columnspan=5, sticky="w")
         advanced.columnconfigure(1, weight=1)
-        ttk.Label(advanced, text="多票種時可指定唯一票數 CSS；影城與同意 CSS 僅供本機示範使用。", wraplength=680).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 7))
+        ttk.Label(advanced, text="票數 CSS 僅在所選票種列內定位；影城與同意 CSS 僅供本機示範使用。", wraplength=680).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 7))
         for row, (label, key) in enumerate((("影城欄位", "cinema_selector"), ("票數欄位", "tickets_selector"), ("同意欄位", "agree_selector")), 1):
             ttk.Label(advanced, text=label).grid(row=row, column=0, padx=(0, 15), pady=3)
             entry = ttk.Entry(advanced, textvariable=self.variables[key])
@@ -168,6 +180,7 @@ class App(tk.Tk):
         for key, variable in self.variables.items():
             variable.set(str(getattr(settings, key)))
         self.agree.set(settings.agree)
+        self.ticket_type.set(get_ticket_type(settings.ticket_type).label)
         self.seat_mode.set(next(label for label, value in SEAT_MODES.items() if value == settings.seat_mode))
         self.seat_direction.set("左側優先" if settings.seat_direction == "left" else "右側優先")
         self.seat_contiguous.set(settings.seat_contiguous)
@@ -238,12 +251,19 @@ class App(tk.Tk):
         for widget in self.inputs + [self.start_button, self.demo_button]:
             widget.configure(state="disabled" if running else "normal")
         self.cinema_combo.configure(state="disabled" if running else "readonly")
+        self.ticket_combo.configure(state="disabled" if running else "readonly")
         self.session_combo.configure(state="disabled" if running else "readonly")
         self.update_seat_controls(running=running)
         for combo in self.date_combos.values():
             combo.configure(state="disabled" if running else "readonly")
         for widget in (self.retry_button, self.stop_button):
             widget.configure(state="normal" if running else "disabled")
+
+    def selected_ticket_type(self):
+        for key, kind in TICKET_TYPES.items():
+            if kind.label == self.ticket_type.get():
+                return key
+        raise ValueError('請從下拉選單選擇購票票種。')
 
     def start(self):
         if self.worker and self.worker.is_alive():
@@ -256,6 +276,7 @@ class App(tk.Tk):
             except ValueError:
                 raise ValueError("票數必須是 1～20 的整數。") from None
             settings = Settings(**values, agree=self.agree.get(),
+                                ticket_type=self.selected_ticket_type(),
                                 **self.selected_seat_settings(),
                                 session_position="first" if self.session_position.get() == "第一場" else "last")
             if settings.url not in ("demo://ticket", "demo://seats"):
@@ -330,6 +351,14 @@ def smoke_test(output):
     app.busy(False)
     assert all(str(combo["state"]) == "readonly" for combo in app.date_combos.values())
     assert str(app.session_combo["state"]) == "readonly"
+    assert app.selected_ticket_type() == 'full_price'
+    app.populate(Settings(ticket_type='special_single_package'))
+    assert app.ticket_type.get() == '優惠套票／特殊映演單人套票'
+    assert app.selected_ticket_type() == 'special_single_package'
+    app.busy(True)
+    assert str(app.ticket_combo['state']) == 'disabled'
+    app.busy(False)
+    assert str(app.ticket_combo['state']) == 'readonly'
     app.populate(Settings(seat_mode='custom', seat_row_start=40, seat_row_end=90,
                           seat_direction='right', seat_contiguous=False, seat_preferred='N7,N8,N9,M7,M8,M9'))
     values = app.selected_seat_settings()
@@ -358,7 +387,8 @@ def smoke_test(output):
     import tempfile
     with tempfile.TemporaryDirectory() as temporary:
         credential_path = Path(temporary) / 'settings.json'
-        credential_settings = Settings(url='demo://ticket', cinema='test', login_email='smoke@example.com', login_password=' local-test-pass ')
+        credential_settings = Settings(url='demo://ticket', cinema='test', ticket_type='special_single_package',
+                                       login_email='smoke@example.com', login_password=' local-test-pass ')
         save_settings(credential_settings, credential_path)
         assert load_settings(credential_path) == credential_settings
         assert credential_settings.login_password not in credential_path.read_text(encoding='utf-8')
@@ -393,6 +423,11 @@ def smoke_test(output):
             page.wait_for_url('https://sales.vscinemas.com.tw/**')
             select_quantity_and_continue(page, checkout, lambda _: None, threading.Event())
             assert '/Seats?count=3' in page.url and not page.is_closed()
+            page.route('https://sales.vscinemas.com.tw/**', lambda route: route.fulfill(content_type='text/html', body='<h1>Manual handoff</h1>' if '/Seats' in route.request.url else resource('package_quantity_fixture.html').read_text(encoding='utf-8')))
+            page.goto('https://sales.vscinemas.com.tw/LiveTicketD4/')
+            select_quantity_and_continue(page, Settings(tickets=3, ticket_type='special_single_package'), lambda _: None, threading.Event())
+            assert '/Seats?count=3' in page.url
+            assert page.evaluate('new URLSearchParams(location.search).get("product")') == '特殊映演單人套票'
             from automation import select_seats_and_continue
             page.goto(resource('seats_fixture.html').as_uri())
             page.locator('#B-1').click()
@@ -408,10 +443,6 @@ def smoke_test(output):
             select_seats_and_continue(page, Settings(seat_mode='middle', tickets=2, seat_preferred='K7,K8'), lambda _: None, threading.Event())
             assert '測試完成' in page.locator('#result').inner_text()
             assert page.locator('#result').inner_text() == '測試完成：K-7、K-8'
-        finally:
-            browser.close()
-    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout"]}), encoding="utf-8")
-            assert 'B-1' not in page.locator('#result').inner_text()
             from automation import login_for_checkout
             login_posts = []
             def login_response(route):
@@ -430,7 +461,7 @@ def smoke_test(output):
             assert len(login_posts) == 1
         finally:
             browser.close()
-    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser", "seat settings", "automatic seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
+    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "ticket type settings and locking", "package collapse quantity and continue", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
 
 
 if __name__ == "__main__":

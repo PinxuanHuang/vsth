@@ -1,7 +1,7 @@
 import threading
 import unittest
 from playwright.sync_api import sync_playwright
-from automation import Cancelled, TicketFlow, resource, select_quantity_and_continue, submit_normal_booking, expand_normal_panel, normal_ticket_panel
+from automation import Cancelled, TicketFlow, resource, select_quantity_and_continue, submit_normal_booking, expand_ticket_panel, ticket_panel
 from config import Settings
 
 BOOKING = 'https://www.vscinemas.com.tw/vsTicketingSP2/ticketing/booking.aspx?cinemacode=21&txtSessionId=165195'
@@ -176,7 +176,7 @@ class CheckoutTests(unittest.TestCase):
         self.page.goto(SALES)
         toggle = self.page.locator('.panel-title a')
         toggle.evaluate("el => {el.setAttribute('aria-expanded','true');el.onclick=()=>false}")
-        expand_normal_panel(self.page, normal_ticket_panel(self.page), lambda _: None, self.stop, .3)
+        expand_ticket_panel(self.page, ticket_panel(self.page, '一般票種'), '一般票種', lambda _: None, self.stop, .3)
         self.assertEqual(toggle.get_attribute('aria-expanded'), 'true')
         self.assertNotIn('collapsed', toggle.get_attribute('class'))
         content = self.page.locator('#random-collapse')
@@ -192,7 +192,7 @@ class CheckoutTests(unittest.TestCase):
         self.page.locator('.panel-title a').evaluate("el => el.onclick=()=>{throw Error('must not click open panel')}")
         errors = []
         self.page.on('pageerror', lambda error: errors.append(str(error)))
-        expand_normal_panel(self.page, normal_ticket_panel(self.page), lambda _: None, self.stop, .3)
+        expand_ticket_panel(self.page, ticket_panel(self.page, '一般票種'), '一般票種', lambda _: None, self.stop, .3)
         self.assertFalse(errors)
         self.assertTrue(content.is_visible())
 
@@ -205,6 +205,6 @@ class CheckoutTests(unittest.TestCase):
             return false;
         }""")
         logs = []
-        expand_normal_panel(self.page, normal_ticket_panel(self.page), logs.append, self.stop, 2)
+        expand_ticket_panel(self.page, ticket_panel(self.page, '一般票種'), '一般票種', logs.append, self.stop, 2)
         self.assertFalse(any('同步修正' in item for item in logs))
         self.assertNotIn('collapsing', self.page.locator('#random-collapse').get_attribute('class'))

@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from playwright.sync_api import Error, sync_playwright
 from config import CINEMAS, parse_preferred_seats, parse_showtime
 from seating import READ_SEATS, plan_seats, seat_key, seat_label
+from ticket_types import get_ticket_type
 
 
 def resource(name):
@@ -248,22 +249,22 @@ def submit_normal_booking(page, settings, log, stop, timeout=30):
     submit.click(timeout=5000)
 
 
-def normal_ticket_panel(page):
-    title = page.locator('.panel-title').filter(has_text=re.compile(r'^\s*一般票種\s*$'))
+def ticket_panel(page, category):
+    title = page.locator('.panel-title').filter(has_text=re.compile(r'^\s*' + re.escape(category) + r'\s*$'))
     return page.locator('.panel').filter(has=title)
 
 
-def expand_normal_panel(page, panel, log, stop, timeout):
+def expand_ticket_panel(page, panel, category, log, stop, timeout):
     toggle = panel.locator('.panel-title a[data-toggle="collapse"]')
     if toggle.count() == 0:
-        return  # A page may render the normal-ticket table without an accordion.
+        return  # A page may render the ticket table without an accordion.
     if toggle.count() != 1:
-        raise ValueError("一般票種的展開按鈕不唯一。")
+        raise ValueError(f"{category}的展開按鈕不唯一。")
     target = toggle.get_attribute('data-target') or toggle.get_attribute('href') or ''
     target_id = target.split('#', 1)[1] if '#' in target else ''
     content = panel.locator('.panel-collapse').filter(has=page.locator('table'))
     if not target_id or content.count() != 1 or content.get_attribute('id') != target_id:
-        raise ValueError("一般票種的展開按鈕與內容區塊不符。")
+        raise ValueError(f"{category}的展開按鈕與內容區塊不符。")
 
     def expanded():
         return content.evaluate("""el => {
@@ -276,10 +277,10 @@ def expand_normal_panel(page, panel, log, stop, timeout):
     if not expanded():
         if stop.is_set():
             raise Cancelled()
-        log("正在展開一般票種區塊…")
+        log(f"正在展開{category}區塊…")
         toggle.click(timeout=5000)
         try:
-            wait_booking(page, expanded, stop, "一般票種展開動畫", min(timeout, 2))
+            wait_booking(page, expanded, stop, f"{category}展開動畫", min(timeout, 2))
         except ValueError:
             if page.is_closed() or stop.is_set():
                 raise
@@ -292,30 +293,31 @@ def expand_normal_panel(page, panel, log, stop, timeout):
                 el.style.height = 'auto';
                 el.style.display = 'block';
             }""")
-            log("展開事件未完成，已同步修正一般票種內容的收合狀態。")
+            log(f"展開事件未完成，已同步修正{category}內容的收合狀態。")
     if stop.is_set():
         raise Cancelled()
     toggle.evaluate("el => {el.classList.remove('collapsed');el.setAttribute('aria-expanded','true')}")
     content.evaluate("el => el.setAttribute('aria-expanded','true')")
-    wait_booking(page, expanded, stop, "一般票種內容展開", timeout)
+    wait_booking(page, expanded, stop, f"{category}內容展開", timeout)
 
 
 def select_quantity_and_continue(page, settings, log, stop, timeout=30):
-    panel = normal_ticket_panel(page)
-    wait_booking(page, lambda: panel.count() > 0, stop, "一般票種區塊", timeout)
+    kind = get_ticket_type(settings.ticket_type)
+    panel = ticket_panel(page, kind.category)
+    wait_booking(page, lambda: panel.count() > 0, stop, f"{kind.category}區塊", timeout)
     if panel.count() != 1:
-        raise ValueError("頁面有多個一般票種區塊，請手動確認。")
-    expand_normal_panel(page, panel, log, stop, timeout)
+        raise ValueError(f"頁面有多個{kind.category}區塊，請手動確認。")
+    expand_ticket_panel(page, panel, kind.category, log, stop, timeout)
     selector = settings.tickets_selector or QUANTITY_SELECTOR
-    full_label = page.locator('td .spName, td').filter(has_text=re.compile(r'^\s*全票\s*$'))
-    rows = panel.locator('table tr').filter(has=full_label).filter(visible=True)
-    wait_booking(page, lambda: rows.count() > 0, stop, "一般票種的全票列", timeout)
+    label = page.locator('td .spName, td').filter(has_text=re.compile(r'^\s*' + re.escape(kind.name) + r'\s*$'))
+    rows = panel.locator('table tr').filter(has=label).filter(visible=True)
+    wait_booking(page, lambda: rows.count() > 0, stop, f"{kind.category}的{kind.name}列", timeout)
     if rows.count() != 1:
-        raise ValueError("一般票種區塊有多個全票列，請手動確認。")
+        raise ValueError(f"{kind.category}區塊有多個{kind.name}列，請手動確認。")
     candidates = rows.locator(selector).filter(visible=True)
-    wait_booking(page, lambda: candidates.count() > 0, stop, "一般票種全票列的票數選單", timeout)
+    wait_booking(page, lambda: candidates.count() > 0, stop, f"{kind.category}{kind.name}列的票數選單", timeout)
     if candidates.count() != 1:
-        raise ValueError("一般票種的全票列有多個票數選單，請手動確認，或設定該列內唯一的票數 CSS 選擇器後重試。")
+        raise ValueError(f"{kind.category}的{kind.name}列有多個票數選單，請手動確認，或設定該列內唯一的票數 CSS 選擇器後重試。")
     quantity = candidates.first
     if quantity.evaluate("el => el.tagName") != 'SELECT':
         raise ValueError("票數選擇器必須指向 select 下拉選單。")
@@ -336,7 +338,7 @@ def select_quantity_and_continue(page, settings, log, stop, timeout=30):
     before = page.url
     if stop.is_set():
         raise Cancelled()
-    log(f"已設定一般票種／全票 {settings.tickets} 張，點擊繼續。")
+    log(f"已設定{kind.label} {settings.tickets} 張，點擊繼續。")
     next_button.click(timeout=5000)
     wait_booking(page, lambda: page.url != before or (not next_button.is_visible() and candidates.count() == 0),
                  stop, "下一個購票步驟", timeout)
@@ -600,7 +602,9 @@ class TicketFlow:
                         continue
                     if urlsplit(candidate.url).hostname != 'sales.vscinemas.com.tw':
                         continue
-                    if normal_ticket_panel(candidate).count() == 0:
+                    # Either requested or other ticket panels identify the quantity page.
+                    # Once it is ready, let the shared selector report a missing product.
+                    if candidate.locator('.panel .panel-title').count() == 0 or candidate.locator('a#btnDoNext').count() == 0:
                         continue
                     self.post_pending = False  # At most one continue click per attempt.
                     select_quantity_and_continue(candidate, self.settings, lambda s: self.emit('log', s), self.stop)

@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 from credentials import protect_password, unprotect_password
+from ticket_types import DEFAULT_TICKET_TYPE, get_ticket_type
 
 
 CINEMAS = {
@@ -65,6 +66,7 @@ class Settings:
     cinema: str = ""
     agree: bool = False
     tickets: int = 2
+    ticket_type: str = DEFAULT_TICKET_TYPE
     cinema_selector: str = ""
     tickets_selector: str = ""
     agree_selector: str = ""
@@ -94,6 +96,7 @@ class Settings:
 
     def validate(self):
         self.validate_seats()
+        get_ticket_type(self.ticket_type)
         if not isinstance(self.login_email, str) or not isinstance(self.login_password, str):
             raise ValueError('會員登入設定格式錯誤。')
         if self.login_email and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', self.login_email):
