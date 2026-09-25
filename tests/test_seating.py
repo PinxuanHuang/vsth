@@ -7,8 +7,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from automation import Cancelled, TicketFlow, resource, select_seats_and_continue
-from config import Settings, load_settings, save_settings
-from seating import READ_SEATS, plan_seats
+from config import Settings, load_settings, parse_preferred_seats, save_settings
+from seating import READ_SEATS, plan_seats, seat_label
 
 
 class SeatConfigTests(unittest.TestCase):
@@ -17,9 +17,11 @@ class SeatConfigTests(unittest.TestCase):
             path = Path(directory) / 'settings.json'
             path.write_text(json.dumps({'url': 'demo://ticket', 'cinema': 'test'}))
             self.assertEqual(load_settings(path).seat_mode, 'manual')
+            self.assertEqual(load_settings(path).seat_preferred, '')
             settings = Settings(url='demo://seats', cinema='test', seat_mode='custom',
                                 seat_row_start=40, seat_row_end=90, seat_col_start=20,
-                                seat_col_end=80, seat_direction='right', seat_contiguous=False)
+                                seat_col_end=80, seat_direction='right', seat_contiguous=False,
+                                seat_preferred='N7,N8,N9,M7,M8,M9')
             save_settings(settings, path)
             self.assertEqual(load_settings(path), settings)
 
@@ -29,6 +31,15 @@ class SeatConfigTests(unittest.TestCase):
                        {'seat_direction': 'up'}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 Settings(**kwargs).validate_seats()
+
+    def test_preferred_seats_normalize_and_deduplicate_in_input_order(self):
+        self.assertEqual(parse_preferred_seats(' n7, N-08，N7, m09, AA12, '), ['N7', 'N8', 'M9', 'AA12'])
+        self.assertEqual(parse_preferred_seats(' , ， '), [])
+
+    def test_invalid_preferred_seats(self):
+        for value in (None, ['N7'], 7, 'N', '7', 'N0', 'N-1-N3', 'N7 M8', 'N7;M8'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, '優先座位'):
+                Settings(seat_preferred=value).validate_seats()
 
 
 class SeatBrowserTests(unittest.TestCase):
@@ -87,6 +98,81 @@ class SeatBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#btnCheckOut').count(), 0)
         self.assertFalse(self.page.is_closed())
 
+    def test_preferred_seats_override_region_and_follow_input_order(self):
+        self.settings.tickets = 2
+        self.settings.seat_preferred = 'b3,B2,B1,K7,K8'
+        self.assertEqual([seat_label(s) for s in plan_seats(self.read(), self.settings)], ['B3', 'B2'])
+        self.run_selection()
+        self.assertEqual(self.page.locator('#result').inner_text(), '測試完成：B-2、B-3')
+        self.assertTrue(any('優先使用指定座位：B3、B2' in line for line in self.logs))
+
+    def test_partial_preference_fills_adjacent_seats(self):
+        self.settings.seat_preferred = 'B1'
+        plan = plan_seats(self.read(), self.settings)
+        self.assertEqual({seat_label(s) for s in plan}, {'B1', 'B2', 'B3'})
+        self.run_selection()
+        self.assertEqual(self.page.locator('#result').inner_text(), '測試完成：B-1、B-2、B-3')
+
+    def test_preferred_seats_never_bridge_an_aisle(self):
+        self.settings.seat_preferred = 'B3,B4,B5'
+        plan = plan_seats(self.read(), self.settings)
+        self.assertEqual({seat_label(s) for s in plan}, {'B2', 'B3', 'B4'})
+
+    def test_isolated_preferred_seat_falls_back_without_partial_clicks(self):
+        baseline = plan_seats(self.read(), self.settings)
+        self.page.locator('#B-2').evaluate("el => {el.dataset.type='Sold';el.dataset.status='3'}")
+        self.settings.seat_preferred = 'B1'
+        self.assertEqual(plan_seats(self.read(), self.settings), baseline)
+        self.run_selection()
+        self.assertNotIn('B-1', self.page.locator('#result').inner_text())
+        self.assertTrue(any('改用原本選位規則' in line for line in self.logs))
+
+    def test_noncontiguous_preferences_fill_from_original_region(self):
+        self.settings.seat_contiguous = False
+        baseline = plan_seats(self.read(), self.settings)
+        self.settings.seat_preferred = 'B1,K18,B1'
+        plan = plan_seats(self.read(), self.settings)
+        self.assertEqual([seat_label(s) for s in plan[:2]], ['B1', 'K18'])
+        self.assertEqual(plan[2], baseline[0])
+
+    def test_all_unavailable_or_absent_preferences_preserve_original_plan(self):
+        baseline = plan_seats(self.read(), self.settings)
+        # E9 is sold in the local fixture; N7 and Z99 do not exist.
+        self.settings.seat_preferred = 'E9,N7,Z99'
+        self.assertEqual(plan_seats(self.read(), self.settings), baseline)
+
+    def test_preferred_seats_do_not_mix_areas(self):
+        self.page.locator('.Seating-Area').evaluate('el => el.after(el.cloneNode(true))')
+        self.page.locator('.Seating-Area').nth(0).locator('#B-2').evaluate("el => {el.dataset.type='Sold';el.dataset.status='3'}")
+        self.page.locator('.Seating-Area').nth(1).locator('#B-1').evaluate("el => {el.dataset.type='Sold';el.dataset.status='3'}")
+        self.settings.seat_contiguous = False
+        self.settings.seat_preferred = 'B1,B2'
+        plan = plan_seats(self.read(), self.settings)
+        self.assertEqual({s['area'] for s in plan}, {0})
+        self.assertEqual(seat_label(plan[0]), 'B1')
+        self.assertNotIn('B2', [seat_label(s) for s in plan])
+
+    def test_new_hall_sample_matches_display_labels_and_sold_status(self):
+        self.page.route('**/img/*', lambda route: route.abort())
+        self.page.set_content((Path(__file__).parent / 'preferred_seat_map_fixture.html').read_text(encoding='utf-8'))
+        self.settings.seat_mode = 'front'
+        baseline = plan_seats(self.read(), self.settings)
+        self.settings.seat_preferred = 'N7,N8,N9,M7,M8,M9'
+        # These six seats are sold in the supplied fragment.
+        self.assertEqual(plan_seats(self.read(), self.settings), baseline)
+        self.page.locator('#M-7, #M-8, #M-9').evaluate_all("""els => els.forEach(el => {
+            el.dataset.type='Empty';el.dataset.status='0';
+            el.querySelector('img').src='../img/standard_available.png';
+        })""")
+        self.assertEqual([seat_label(s) for s in plan_seats(self.read(), self.settings)], ['M7', 'M8', 'M9'])
+        self.page.locator('#N-7, #N-8, #N-9').evaluate_all("""els => els.forEach(el => {
+            el.dataset.type='Empty';el.dataset.status='0';
+            el.querySelector('img').src='../img/standard_available.png';
+        })""")
+        plan = plan_seats(self.read(), self.settings)
+        self.assertEqual([seat_label(s) for s in plan], ['N7', 'N8', 'N9'])
+        self.assertEqual([(s['backendRow'], s['backendSeat']) for s in plan], [('1', '15'), ('1', '14'), ('1', '13')])
+
     def install_site_handler(self, selected_ids):
         self.settings.tickets = 2
         self.page.route('**/img/*', lambda route: route.abort())
@@ -134,6 +220,13 @@ class SeatBrowserTests(unittest.TestCase):
         self.assertEqual({s['id'] for s in self.page.evaluate('submitted')}, {s['id'] for s in plan})
         self.assertEqual({(s['row'], s['seat']) for s in self.page.evaluate('submitted')},
                          {(s['backendRow'], s['backendSeat']) for s in plan})
+
+    def test_real_site_fifo_preserves_preferred_selection(self):
+        self.install_site_handler(['B-1', 'B-2'])
+        self.settings.seat_preferred = 'B1,B3,B4'
+        self.settings.seat_contiguous = False
+        self.run_selection()
+        self.assertEqual({s['id'] for s in self.page.evaluate('submitted')}, {'B-1', 'B-3'})
 
     def test_real_site_selected_targets_need_no_clicks(self):
         self.install_site_handler([])
@@ -267,6 +360,7 @@ class SeatBrowserTests(unittest.TestCase):
 
     def test_manual_leaves_page_untouched(self):
         self.settings.seat_mode = 'manual'
+        self.settings.seat_preferred = 'B1,B2,B3'
         self.run_selection()
         self.assertFalse(any(s['selected'] for s in self.read()))
         self.assertTrue(self.page.locator('#btnCheckOut').is_visible())
@@ -364,6 +458,7 @@ class SeatBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator('#btnCheckOut').is_visible())
 
     def test_flow_continues_after_quantity_once(self):
+        self.settings.seat_preferred = 'B1,B2,B3'
         self.context.route('https://sales.vscinemas.com.tw/**', lambda route: route.fulfill(
             content_type='text/html', body=resource('seats_fixture.html' if '/Seats' in route.request.url else 'quantity_fixture.html').read_text(encoding='utf-8')))
         self.page.goto('https://sales.vscinemas.com.tw/LiveTicketD4/')
@@ -373,6 +468,7 @@ class SeatBrowserTests(unittest.TestCase):
         flow.booking_page = self.page
         flow.tick(self.context.pages)
         self.assertIn('測試完成', self.page.locator('#result').inner_text())
+        self.assertIn('B-1、B-2、B-3', self.page.locator('#result').inner_text())
         before = list(self.logs)
         flow.tick(self.context.pages)
         self.assertEqual(self.logs, before)

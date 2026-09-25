@@ -1,5 +1,7 @@
 """Read seat labels and physical grid positions without assuming hall dimensions."""
 
+from config import parse_preferred_seats
+
 READ_SEATS = """tables => tables.flatMap((table, areaIndex) => {
     if (!table.getClientRects().length) return [];
     const rows = Array.from(table.rows);
@@ -35,6 +37,60 @@ def seat_key(seat):
     return seat['area'], seat['gridRow'], seat['gridCol']
 
 
+def seat_label(seat):
+    label = seat['label']
+    return seat['row'].upper() + (str(int(label)) if label.isdecimal() else label.upper())
+
+
+def contiguous_blocks(candidates, count):
+    groups = {}
+    for seat in candidates:
+        groups.setdefault((seat['area'], seat['gridRow']), []).append(seat)
+    for row in groups.values():
+        row.sort(key=lambda seat: seat['gridCol'])
+        for i in range(len(row) - count + 1):
+            block = row[i:i + count]
+            if block[-1]['gridCol'] - block[0]['gridCol'] == count - 1:
+                yield block
+
+
+def preferred_plan(seats, settings, candidates, rank, cx, direction):
+    preferences = parse_preferred_seats(settings.seat_preferred)
+    if not preferences:
+        return []
+    order = {label: i for i, label in enumerate(preferences)}
+    available = [s for s in seats if s['available'] or (s['selected'] and s['selectable'])]
+
+    def priority(seat):
+        return order.get(seat_label(seat), len(order))
+
+    def score(plan):
+        # Pad with the non-preferred rank so an additional preferred seat wins a tie.
+        return tuple(sorted(priority(s) for s in plan))
+
+    plans = []
+    if settings.seat_contiguous:
+        # Explicit seats override the percentage bounds; fill only adjacent seats.
+        for block in contiguous_blocks(available, settings.tickets):
+            if not any(seat_label(s) in order for s in block):
+                continue
+            center = (block[0]['x'] + block[-1]['x']) / 2
+            plans.append(((score(block), abs(center - cx), block[0]['gridRow'],
+                           direction * block[0]['gridCol'], block[0]['area']),
+                          sorted(block, key=lambda s: (priority(s), abs(s['x'] - cx), direction * s['gridCol']))))
+    else:
+        for area in sorted({s['area'] for s in available}):
+            preferred = sorted((s for s in available if s['area'] == area and seat_label(s) in order), key=priority)
+            if not preferred:
+                continue
+            keys = {seat_key(s) for s in preferred}
+            remaining = sorted((s for s in candidates if s['area'] == area and seat_key(s) not in keys), key=rank)
+            plan = (preferred + remaining)[:settings.tickets]
+            if len(plan) == settings.tickets:
+                plans.append(((score(plan), area), plan))
+    return min(plans, key=lambda item: item[0])[1] if plans else []
+
+
 def seat_bounds(settings):
     if settings.seat_mode == 'custom':
         return settings.seat_row_start, settings.seat_row_end, settings.seat_col_start, settings.seat_col_end
@@ -66,21 +122,17 @@ def plan_seats(seats, settings):
     def rank(s):
         return row_priority[s['area'], s['gridRow']], abs(s['x'] - cx), s['gridRow'], direction * s['gridCol'], s['area']
 
+    preferred = preferred_plan(seats, settings, candidates, rank, cx, direction)
+    if preferred:
+        return preferred
+
     plans = []
     if settings.seat_contiguous:
-        groups = {}
-        for s in candidates:
-            groups.setdefault((s['area'], s['gridRow']), []).append(s)
-        for row in groups.values():
-            row.sort(key=lambda s: s['gridCol'])
-            for i in range(len(row) - settings.tickets + 1):
-                block = row[i:i + settings.tickets]
-                if block[-1]['gridCol'] - block[0]['gridCol'] != settings.tickets - 1:
-                    continue
-                center = (block[0]['x'] + block[-1]['x']) / 2
-                score = (row_priority[block[0]['area'], block[0]['gridRow']], abs(center - cx), block[0]['gridRow'],
-                         direction * block[0]['gridCol'], block[0]['area'])
-                plans.append((score, sorted(block, key=rank)))
+        for block in contiguous_blocks(candidates, settings.tickets):
+            center = (block[0]['x'] + block[-1]['x']) / 2
+            score = (row_priority[block[0]['area'], block[0]['gridRow']], abs(center - cx), block[0]['gridRow'],
+                     direction * block[0]['gridCol'], block[0]['area'])
+            plans.append((score, sorted(block, key=rank)))
     else:
         for area in sorted({s['area'] for s in candidates}):
             ordered = sorted((s for s in candidates if s['area'] == area), key=rank)

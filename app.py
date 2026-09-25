@@ -16,7 +16,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("電影購票助手")
-        self.geometry("820x810")
+        self.geometry("820x870")
         self.minsize(720, 750)
         self.configure(bg="#edf2f8")
         self.worker = None
@@ -100,6 +100,7 @@ class App(tk.Tk):
         self.seat_mode = tk.StringVar(value="手動選位")
         self.seat_direction = tk.StringVar(value="左側優先")
         self.seat_contiguous = tk.BooleanVar(value=True)
+        self.seat_preferred = tk.StringVar()
         ttk.Label(seats, text="選位方式").grid(row=0, column=0, sticky="w", pady=4)
         self.seat_combo = ttk.Combobox(seats, textvariable=self.seat_mode, values=list(SEAT_MODES), state="readonly", width=15)
         self.seat_combo.grid(row=0, column=1, columnspan=2, sticky="w", padx=8)
@@ -124,6 +125,12 @@ class App(tk.Tk):
         self.seat_demo_button = ttk.Button(seats, text="載入座位測試", command=self.seat_demo)
         self.seat_demo_button.grid(row=2, column=4, sticky="e")
         self.inputs.append(self.seat_demo_button)
+        ttk.Label(seats, text="優先座位（逗號分隔）").grid(row=3, column=0, sticky="w", pady=5)
+        self.seat_preferred_entry = ttk.Entry(seats, textvariable=self.seat_preferred)
+        self.seat_preferred_entry.grid(row=3, column=1, columnspan=4, sticky="ew", padx=8, pady=5)
+        self.inputs.append(self.seat_preferred_entry)
+        ttk.Label(seats, text="例如 N7,N8,N9,M7,M8,M9；自動選位時依序優先，無可行組合則沿用原規則。",
+                  wraplength=660).grid(row=4, column=0, columnspan=5, sticky="w")
         advanced.columnconfigure(1, weight=1)
         ttk.Label(advanced, text="多票種時可指定唯一票數 CSS；影城與同意 CSS 僅供本機示範使用。", wraplength=680).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 7))
         for row, (label, key) in enumerate((("影城欄位", "cinema_selector"), ("票數欄位", "tickets_selector"), ("同意欄位", "agree_selector")), 1):
@@ -164,6 +171,7 @@ class App(tk.Tk):
         self.seat_mode.set(next(label for label, value in SEAT_MODES.items() if value == settings.seat_mode))
         self.seat_direction.set("左側優先" if settings.seat_direction == "left" else "右側優先")
         self.seat_contiguous.set(settings.seat_contiguous)
+        self.seat_preferred.set(settings.seat_preferred)
         for key, variable in self.seat_ranges.items():
             variable.set(str(getattr(settings, key)))
         self.update_seat_controls()
@@ -207,6 +215,7 @@ class App(tk.Tk):
         self.seat_combo.configure(state="disabled" if running else "readonly")
         self.direction_combo.configure(state="disabled" if running or manual else "readonly")
         self.seat_check.configure(state="disabled" if running or manual else "normal")
+        self.seat_preferred_entry.configure(state="disabled" if running or manual else "normal")
         for entry in self.seat_range_inputs:
             entry.configure(state="normal" if not running and self.seat_mode.get() == "自訂範圍" else "disabled")
 
@@ -217,7 +226,7 @@ class App(tk.Tk):
             raise ValueError("座位範圍請輸入 0～100 的整數。") from None
         return dict(values, seat_mode=SEAT_MODES[self.seat_mode.get()],
                     seat_direction="left" if self.seat_direction.get() == "左側優先" else "right",
-                    seat_contiguous=self.seat_contiguous.get())
+                    seat_contiguous=self.seat_contiguous.get(), seat_preferred=self.seat_preferred.get().strip())
 
     def log(self, text):
         self.logs.configure(state="normal")
@@ -322,14 +331,19 @@ def smoke_test(output):
     assert all(str(combo["state"]) == "readonly" for combo in app.date_combos.values())
     assert str(app.session_combo["state"]) == "readonly"
     app.populate(Settings(seat_mode='custom', seat_row_start=40, seat_row_end=90,
-                          seat_direction='right', seat_contiguous=False))
+                          seat_direction='right', seat_contiguous=False, seat_preferred='N7,N8,N9,M7,M8,M9'))
     values = app.selected_seat_settings()
     assert values['seat_row_start'] == 40 and values['seat_row_end'] == 90
     assert values['seat_direction'] == 'right' and not values['seat_contiguous']
+    assert values['seat_preferred'] == 'N7,N8,N9,M7,M8,M9'
     app.busy(True)
     assert all(str(entry['state']) == 'disabled' for entry in app.seat_range_inputs)
+    assert str(app.seat_preferred_entry['state']) == 'disabled'
     app.busy(False)
     assert all(str(entry['state']) == 'normal' for entry in app.seat_range_inputs)
+    assert str(app.seat_preferred_entry['state']) == 'normal'
+    app.populate(Settings(seat_preferred='N7'))
+    assert str(app.seat_preferred_entry['state']) == 'disabled'
     app.seat_demo()
     assert app.variables['url'].get() == 'demo://seats'
     assert app.selected_seat_settings()['seat_mode'] == 'middle'
@@ -347,6 +361,7 @@ def smoke_test(output):
         save_settings(credential_settings, credential_path)
         assert load_settings(credential_path) == credential_settings
         assert credential_settings.login_password not in credential_path.read_text(encoding='utf-8')
+    assert app.selected_seat_settings()['seat_preferred'] == ''
     app.destroy()
     settings = Settings(url="demo://ticket", cinema="台中示範影城", tickets=3, agree=True)
     with sync_playwright() as pw:
@@ -390,7 +405,7 @@ def smoke_test(output):
                     SelectSeats.push(el.id); el.dataset.status='5';
                 });
             }""")
-            select_seats_and_continue(page, Settings(seat_mode='middle', tickets=2), lambda _: None, threading.Event())
+            select_seats_and_continue(page, Settings(seat_mode='middle', tickets=2, seat_preferred='K7,K8'), lambda _: None, threading.Event())
             assert '測試完成' in page.locator('#result').inner_text()
             assert 'B-1' not in page.locator('#result').inner_text()
             from automation import login_for_checkout
@@ -412,6 +427,10 @@ def smoke_test(output):
         finally:
             browser.close()
     Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser", "seat settings", "automatic seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
+            assert page.locator('#result').inner_text() == '測試完成：K-7、K-8'
+        finally:
+            browser.close()
+    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout"]}), encoding="utf-8")
 
 
 if __name__ == "__main__":

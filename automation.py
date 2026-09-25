@@ -9,8 +9,8 @@ from datetime import datetime
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import Error, sync_playwright
-from config import CINEMAS, parse_showtime
-from seating import READ_SEATS, plan_seats, seat_key
+from config import CINEMAS, parse_preferred_seats, parse_showtime
+from seating import READ_SEATS, plan_seats, seat_key, seat_label
 
 
 def resource(name):
@@ -355,6 +355,13 @@ def select_seats_and_continue(page, settings, log, stop, timeout=30):
     wait_booking(page, lambda: bool(read()), stop, '座位圖', timeout)
     initial = read()
     plan = plan_seats(initial, settings)
+    preferences = parse_preferred_seats(settings.seat_preferred)
+    if preferences:
+        matched = [seat_label(s) for s in plan if seat_label(s) in preferences]
+        if matched:
+            log('優先使用指定座位：' + '、'.join(matched) + '；其餘座位依選位規則補足。')
+        else:
+            log('指定座位不存在、不可選或無法依設定湊足張數，改用原本選位規則。')
     expected = {seat_key(s) for s in initial if s['selected']}
     wanted = {seat_key(s) for s in plan}
 
