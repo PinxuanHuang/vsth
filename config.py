@@ -13,7 +13,7 @@ from ticket_types import (DEFAULT_TICKET_TYPE, DEFAULT_ESLITE_TICKET_TYPE,
 
 BOOKING_SITES = {
     "威秀": "https://www.vscinemas.com.tw/hold",
-    "誠品": "https://arthouse.eslite.com/visSelect.asp",
+    "誠品": "https://arthouse.eslite.com/member/Login.aspx?RedirectUrl=%2fvisMbrBookings.aspx",
 }
 
 
@@ -150,6 +150,9 @@ def load_settings(path=None):
     if not path.exists():
         return Settings()
     data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get('url') in ('https://arthouse.eslite.com/visSelect.asp',
+                           'https://arthouse.eslite.com/visSelect.aspx'):
+        data['url'] = BOOKING_SITES['誠品']
     # Preserve the date from settings saved by the former date/time picker.
     stamp = data.get("showtime")
     if isinstance(stamp, str) and len(stamp) == 16:

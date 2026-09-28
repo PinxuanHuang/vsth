@@ -720,7 +720,7 @@ class BrowserWorker(threading.Thread):
             with desktop_edge(pw, self.settings.url, profile, self.stop_event) as browser:
                 if browser is None:
                     return
-                self.emit('log', '請在誠品視窗手動完成同意與驗證，再點選左側影城。')
+                self.emit('log', '請在誠品視窗手動登入並完成驗證，再點網站「訂票」；進入選片頁後會自動選擇左側第一家影城。')
                 flow = EsliteFlow(self.settings, self.emit, self.stop_event)
                 while browser.is_connected() and not self.stop_event.is_set():
                     pages = [page for context in browser.contexts for page in context.pages if not page.is_closed()]
@@ -748,7 +748,7 @@ class BrowserWorker(threading.Thread):
                     self.run_eslite()
                     return
                 os.startfile("microsoft-edge:" + target_url(self.settings))
-                self.emit("log", "已交由一般 Edge 開啟誠品，請在瀏覽器完成同意與驗證；該視窗請手動關閉。")
+                self.emit("log", "已交由一般 Edge 開啟誠品登入頁，請手動登入與驗證後點「訂票」；該視窗請手動關閉。")
                 done_text = "已在一般 Microsoft Edge 開啟誠品"
                 return
             with sync_playwright() as pw:

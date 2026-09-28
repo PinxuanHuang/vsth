@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<form>
+  <label><input type="checkbox" name="newsletter">接收電子報</label>
+  <table width="100%" border="0" class="confirmationcheck">
+    <tbody>
+      <tr><td colspan="3">
+        <table id="tblExtraCardDetails" cellspacing="0" cellpadding="0" border="0">
+          <tbody>
+            <tr class="PaymentDetailsRow"><td></td><td><span class="PaymentDetailsSubHeader">電子郵件：</span></td><td colspan="2"></td><td><span class="PaymentDetailsTextBox">sample@example.com</span></td><td></td></tr>
+            <tr class="PaymentDetailsRow"><td></td><td><span class="PaymentDetailsSubHeader">姓名：</span></td><td colspan="2"></td><td><span class="PaymentDetailsTextBox">測試使用者</span></td><td></td></tr>
+            <tr class="PaymentDetailsRow"><td></td><td><span class="PaymentDetailsSubHeader">手機號碼：</span></td><td colspan="2"></td><td><span class="PaymentDetailsTextBox">測試手機</span></td><td></td></tr>
+            <tr><td colspan="3"></td><td colspan="2"><input id="chkTerms" type="checkbox" name="chkTerms" tabindex="1"><span id="lblTerms" class="TermsAndConditions">我已經閱讀並同意以下之</span></td><td></td></tr>
+            <tr><td colspan="4"></td><td><a id="lnkTerms" class="StandardLink" href="javascript:openWindow('visTerms.aspx',500,580)">訂票需知</a></td><td></td></tr>
+          </tbody>
+        </table>
+      </td></tr>
+      <tr>
+        <td colspan="3"><table><tbody>
+          <tr><td colspan="2"><table id="tblError" class="ErrorTable"></table></td></tr>
+          <tr><td><a onclick="PClick(this);" id="ibtnPayNow" class="bt" href="javascript:__doPostBack('ibtnPayNow','')">確定</a></td><td>當您按下立即確認鍵後，您的交易將進行處理且不能更改。</td></tr>
+        </tbody></table></td>
+        <td><ul>
+          <li><a id="btnCancelClick" class="bt" href="javascript:__doPostBack('btnCancelClick','')">取消訂票</a><a href="visSelect.aspx" id="lnkCancelOrder" style="display:none" class="bt">取消訂票</a></li>
+          <li><a id="btnBackTicketsClick" class="bt" href="javascript:__doPostBack('btnBackTicketsClick','')" style="display:none">重新選票</a><a href="visSelectTickets.aspx?visJava=false" id="lnkChangeTickets" class="bt">重新選票</a></li>
+        </ul></td>
+      </tr>
+    </tbody>
+  </table>
+</form>
+<script>
+window.actions = [];
+window.changes = [];
+document.addEventListener('change', e => changes.push(e.target.name));
+document.addEventListener('click', e => {
+  const a = e.target.closest('a');
+  if (a) { e.preventDefault(); actions.push(a.textContent); }
+});
+window.PClick = () => actions.push('PClick');
+window.__doPostBack = target => actions.push(target);
+window.openWindow = url => actions.push(url);
+</script>

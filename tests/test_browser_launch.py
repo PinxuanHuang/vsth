@@ -6,7 +6,7 @@ from automation import BrowserWorker, target_url
 from config import BOOKING_SITES, Settings
 
 
-ESLITE_URL = "https://arthouse.eslite.com/visSelect.asp"
+ESLITE_URL = "https://arthouse.eslite.com/member/Login.aspx?RedirectUrl=%2fvisMbrBookings.aspx"
 VIESHOW_URL = "https://www.vscinemas.com.tw/hold"
 
 

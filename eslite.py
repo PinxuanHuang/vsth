@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error
 from eslite_tickets import EsliteTicketFlow, ticket_session
+from eslite_confirmation import EsliteConfirmationFlow
 
 
 READ_SELECTION = r"""() => {
@@ -39,6 +40,17 @@ def is_selection_page(url):
 def query_value(url, name):
     values = parse_qs(urlsplit(url).query).get(name, [])
     return values[0] if len(values) == 1 else None
+
+
+def first_cinema(snapshot):
+    if not snapshot['cinemas']:
+        return None
+    link = snapshot['cinemas'][0]
+    if (link['disabled'] or not is_selection_page(link['href'])
+            or query_value(link['href'], 'visSearchBy') != 'cin'
+            or not query_value(link['href'], 'visCinID')):
+        raise ValueError('左側第一家影城連結不可用；不會跳過改選其他影城。')
+    return link
 
 
 def movie_link(snapshot, wanted):
@@ -109,9 +121,14 @@ class EsliteFlow:
         self.attempted_sessions = set()
         self.page = None
         self.session_target = None
+        self.confirmation_flow = None
         self.arm()
 
     def arm(self):
+        if self.confirmation_flow is not None:
+            self.active = True
+            self.confirmation_flow.deadline = time.monotonic() + 30
+            return
         resume = (self.page and not self.page.is_closed() and self.session_target
                   and ticket_session(self.page.url) == ticket_session(self.session_target))
         self.active = True
@@ -119,6 +136,7 @@ class EsliteFlow:
             self.page = None
             self.session_target = None
         self.movie_target = None
+        self.cinema_target = None
         self.ticket_flow = None
         self.deadline = time.monotonic() + 30
         self.last_status = None
@@ -146,6 +164,11 @@ class EsliteFlow:
         if not self.active or self.stop.is_set():
             return
         try:
+            if self.confirmation_flow is not None:
+                if self.confirmation_flow.tick(self.page):
+                    self.active = False
+                    self.emit('handoff', '誠品確認頁已就緒，請自行檢查訂單與條款，再點「確定」；程式不送出交易')
+                return
             if self.session_target:
                 if self.page and not self.page.is_closed() and (
                     ticket_session(self.page.url) == ticket_session(self.session_target)
@@ -154,8 +177,9 @@ class EsliteFlow:
                         self.ticket_flow = EsliteTicketFlow(
                             self.settings, self.emit, self.stop, self.session_target, self.attempted_sessions)
                     if self.ticket_flow.tick(self.page):
-                        self.active = False
-                        self.emit('handoff', '已點擊誠品系統選位，請在瀏覽器確認後續頁面；不會自動付款')
+                        self.confirmation_flow = EsliteConfirmationFlow(
+                            self.settings, self.emit, self.stop, self.session_target)
+                        self.status('已點擊系統選位，等待訂票確認頁')
                     return
                 if self.ticket_flow is not None:
                     raise ValueError('票種頁已離開或場次變更，請手動確認後續頁面。')
@@ -166,14 +190,14 @@ class EsliteFlow:
             if self.page and not self.page.is_closed():
                 page = self.page
                 if not is_selection_page(page.url):
-                    self.status('等待手動驗證完成並返回誠品選片頁')
+                    self.status('等待手動登入與驗證完成，請點網站「訂票」回到選片頁')
                     return
             elif len(available) == 1:
                 page = available[0]
             elif len(available) > 1:
                 raise ValueError('有多個誠品選片分頁，請只保留要操作的分頁後重新套用。')
             else:
-                self.status('等待手動完成驗證，並在誠品頁面選擇影城')
+                self.status('請先手動登入與完成驗證，再點網站「訂票」；進入選片頁後自動選擇第一家影城')
                 return
             try:
                 snapshot = page.evaluate(READ_SELECTION)
@@ -183,9 +207,33 @@ class EsliteFlow:
                 )):
                     return
                 raise
+            cinema = first_cinema(snapshot)
+            if cinema is None:
+                self.status('等待左側影城清單')
+                return
+            self.page = page
+            if self.cinema_target and self.cinema_target != cinema['href']:
+                raise ValueError('左側第一家影城已變更，請確認後重新套用。')
+            selected_cinema = (query_value(snapshot['url'], 'visSearchBy') == 'cin'
+                               and query_value(snapshot['url'], 'visCinID') == query_value(cinema['href'], 'visCinID'))
+            if not selected_cinema:
+                if self.cinema_target:
+                    if self.movie_target:
+                        raise ValueError('已選影城被更改，請確認後重新套用。')
+                    if time.monotonic() > self.deadline:
+                        raise ValueError('影城已點擊，但頁面尚未更新；不會重複點擊。')
+                    return
+                if page.url != snapshot['url']:
+                    return
+                self.cinema_target = cinema['href']
+                self.deadline = time.monotonic() + 30
+                self.click(page, '#box_left', cinema)
+                self.emit('log', f"已選擇誠品第一家影城：{cinema['text']}")
+                return
+            self.cinema_target = cinema['href']
             link = movie_link(snapshot, self.settings.eslite_movie)
             if not link:
-                self.status('等待選擇影城或符合設定片名的電影清單')
+                self.status('等待符合設定片名的電影清單')
                 return
             self.page = page
             target = link['href']

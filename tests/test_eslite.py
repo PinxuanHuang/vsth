@@ -15,6 +15,7 @@ from automation import BrowserWorker
 from config import BOOKING_SITES, Settings, load_settings, save_settings
 from eslite import EsliteFlow, READ_SELECTION, displayed_date, movie_link, session_link
 from tests.test_eslite_tickets import ticket_fixture
+from tests.test_eslite_confirmation import confirmation_fixture
 
 
 BASE = 'https://arthouse.eslite.com/visSelect.aspx'
@@ -25,6 +26,7 @@ MOVIE = 'opaque+movie/value='
 SELECTED = BASE + '?' + urlencode({'visSearchBy': 'cin', 'visCinID': CINEMA})
 MOVIE_URL = SELECTED + '&' + urlencode({'visMovieName': MOVIE})
 SESSION_URL = 'https://arthouse.eslite.com/visSelectTickets.aspx?' + urlencode({'cinemacode': CINEMA, 'txtSessionId': 'dynamic-session-82'})
+CONFIRMATION_URL = 'https://arthouse.eslite.com/confirmation-test.aspx'
 
 
 def anchor(url, text, extra=''):
@@ -52,6 +54,12 @@ class EsliteConfigTests(unittest.TestCase):
             self.assertEqual(load_settings(path), settings)
             path.write_text(json.dumps({'url': ENTRY}), encoding='utf-8')
             self.assertEqual(load_settings(path).eslite_movie, '')
+            for old in ('https://arthouse.eslite.com/visSelect.asp', 'https://arthouse.eslite.com/visSelect.aspx'):
+                path.write_text(json.dumps({'url': old, 'eslite_ticket_type': 'member', 'agree': True}), encoding='utf-8')
+                migrated = load_settings(path)
+                self.assertEqual(migrated.url, ENTRY)
+                self.assertEqual(migrated.eslite_ticket_type, 'member')
+                self.assertTrue(migrated.agree)
 
     def test_auto_requires_date_and_exact_time_but_vieshow_ignores_fields(self):
         for stamp in ('', '24:00', '9:30', '18:60'):
@@ -89,6 +97,7 @@ class EsliteBrowserTests(unittest.TestCase):
     def setUp(self):
         self.page = self.browser.new_page()
         self.requests = []
+        self.system_posts = []
         self.messages = []
         self.stop = threading.Event()
         self.settings = Settings(url=ENTRY, eslite_movie=TITLE, eslite_time='18:45', showtime='2032-10-03')
@@ -98,32 +107,39 @@ class EsliteBrowserTests(unittest.TestCase):
             parts = urlsplit(route.request.url)
             query = parse_qs(parts.query)
             body = ticket_fixture() if parts.path.lower() == '/visselecttickets.aspx' else fixture('visCinID' in query, 'visMovieName' in query)
+            if route.request.url == CONFIRMATION_URL:
+                body = confirmation_fixture()
+                self.system_posts.append(route.request.url)
+            elif parts.path.lower() == '/visselecttickets.aspx':
+                body += '<script>window.__doPostBack = () => { location.href = "' + CONFIRMATION_URL + '"; };</script>'
             route.fulfill(body=body, content_type='text/html; charset=utf-8')
         self.page.route('**/*', respond)
 
     def tearDown(self):
         self.page.close()
 
-    def test_waits_for_manual_cinema_then_clicks_movie_and_exact_date_time_once(self):
+    def test_auto_first_cinema_movie_time_tickets_and_confirmation_once(self):
         self.page.goto(BASE)
         self.flow.tick([self.page])
-        self.assertEqual(len(self.requests), 1)
-        self.page.locator('#box_left a').click()
+        self.assertEqual(self.page.url, SELECTED)
         self.flow.tick([self.page])
         self.assertEqual(self.page.url, MOVIE_URL)
         self.flow.tick([self.page])
         self.assertEqual(self.page.url, SESSION_URL)
         self.flow.tick([self.page])
         self.flow.tick([self.page])
+        self.page.wait_for_url(CONFIRMATION_URL)
+        self.flow.tick([self.page])
         self.assertEqual(self.requests.count(SESSION_URL), 1)
         self.assertTrue(any(kind == 'handoff' for kind, _ in self.messages))
-        self.page.wait_for_function('posts.length === 1')
-        self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
-        self.assertEqual(self.page.locator('select').first.input_value(), '2')
+        self.assertEqual(len(self.system_posts), 1)
+        self.assertFalse(self.page.locator('#chkTerms').is_checked())
+        self.assertEqual(self.page.evaluate('actions'), [])
         self.flow.arm()
         self.flow.tick([self.page])
         self.assertFalse(self.flow.active)
-        self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
+        self.assertEqual(len(self.system_posts), 1)
+        self.assertEqual(self.page.evaluate('actions'), [])
 
     def test_retry_on_ticket_page_before_submission(self):
         self.page.goto(MOVIE_URL)
@@ -136,8 +152,42 @@ class EsliteBrowserTests(unittest.TestCase):
         self.flow.arm()
         self.flow.tick([self.page])
         self.flow.tick([self.page])
-        self.page.wait_for_function('posts.length === 1')
-        self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
+        self.page.wait_for_url(CONFIRMATION_URL)
+        self.settings.agree = True
+        self.flow.tick([self.page])
+        self.assertTrue(self.page.locator('#chkTerms').is_checked())
+        self.assertEqual(len(self.system_posts), 1)
+        self.assertEqual(self.page.evaluate('actions'), [])
+
+    def test_first_cinema_uses_list_order_and_disabled_first_is_not_skipped(self):
+        self.page.goto(BASE)
+        self.page.locator('#box_left table').evaluate("el => el.insertAdjacentHTML('beforeend', '<tr><td><a href=\"visSelect.aspx?visSearchBy=cin&visCinID=second\">另一家影城</a></td></tr>')")
+        self.page.locator('#box_left a').first.evaluate("el => el.setAttribute('aria-disabled', 'true')")
+        self.flow.tick([self.page])
+        self.assertFalse(self.flow.active)
+        self.assertEqual(self.page.url, BASE)
+        self.page.locator('#box_left a').first.evaluate("el => el.removeAttribute('aria-disabled')")
+        self.flow.arm()
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, SELECTED)
+
+    def test_waits_on_login_page_without_skipping_login(self):
+        self.page.goto(ENTRY)
+        self.page.set_content('<input type="password"><button>登入</button>')
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, ENTRY)
+        self.assertEqual(len(self.requests), 1)
+        self.assertTrue(self.flow.active)
+
+    def test_cinema_click_does_not_repeat_when_navigation_fails(self):
+        self.page.goto(BASE)
+        self.page.locator('#box_left a').evaluate('el => el.onclick = event => event.preventDefault()')
+        self.flow.tick([self.page])
+        self.flow.tick([self.page])
+        self.assertEqual(len(self.requests), 1)
+        self.flow.deadline = 0
+        self.flow.tick([self.page])
+        self.assertFalse(self.flow.active)
 
     def test_supplied_dom_uses_chinese_movie_and_adjacent_date_row(self):
         self.page.goto(BASE + '?visSearchBy=cin&visCinID=1001')

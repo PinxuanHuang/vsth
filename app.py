@@ -560,9 +560,21 @@ def smoke_test(output):
             assert eslite_flow.tick(page)
             assert page.evaluate('window.clicks') == 1
             assert len(attempted) == 1
+            from eslite_confirmation import EsliteConfirmationFlow
+            page.goto('https://arthouse.eslite.com/local-confirmation.aspx')
+            page.set_content('''<input type="checkbox" name="newsletter">
+                <table class="confirmationcheck"><tr><td><input type="checkbox" name="dynamic-terms">
+                <span class="TermsAndConditions">我已經閱讀並同意以下之</span></td></tr></table>
+                <button onclick="window.transactionSent=true">確定</button>''')
+            consent = EsliteConfirmationFlow(Settings(agree=True), lambda *_: None,
+                                             threading.Event(), eslite_url)
+            assert consent.tick(page)
+            assert page.locator('input[name="dynamic-terms"]').is_checked()
+            assert not page.locator('input[name="newsletter"]').is_checked()
+            assert page.evaluate('window.transactionSent') is None
         finally:
             browser.close()
-    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "ticket type settings and locking", "site-specific ticket choices", "eslite quantity and system seats", "package collapse quantity and continue", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
+    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "ticket type settings and locking", "site-specific ticket choices", "eslite quantity and system seats", "eslite scoped consent without transaction", "package collapse quantity and continue", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
 
 
 if __name__ == "__main__":
