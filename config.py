@@ -10,6 +10,12 @@ from credentials import protect_password, unprotect_password
 from ticket_types import DEFAULT_TICKET_TYPE, get_ticket_type
 
 
+BOOKING_SITES = {
+    "威秀": "https://www.vscinemas.com.tw/hold",
+    "誠品": "https://arthouse.eslite.com/visSelect.asp",
+}
+
+
 CINEMAS = {
     "台北信義威秀影城": "1|TP",
     "MUVIE CINEMAS 台北松仁": "21|MU",
@@ -62,7 +68,7 @@ def parse_showtime(value):
 
 @dataclass
 class Settings:
-    url: str = ""
+    url: str = BOOKING_SITES["威秀"]
     cinema: str = ""
     agree: bool = False
     tickets: int = 2
@@ -72,6 +78,8 @@ class Settings:
     agree_selector: str = ""
     showtime: str = ""
     session_position: str = "first"
+    eslite_movie: str = ""
+    eslite_time: str = ""
     seat_mode: str = "manual"
     seat_row_start: int = 0
     seat_row_end: int = 100
@@ -96,6 +104,12 @@ class Settings:
 
     def validate(self):
         self.validate_seats()
+        if not isinstance(self.eslite_movie, str) or not isinstance(self.eslite_time, str):
+            raise ValueError("誠品電影名稱與場次時間格式錯誤。")
+        if self.url == BOOKING_SITES["誠品"] and self.eslite_movie.strip():
+            parse_showtime(self.showtime)
+            if not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", self.eslite_time):
+                raise ValueError("誠品場次時間請輸入 HH:MM，例如 13:20。")
         get_ticket_type(self.ticket_type)
         if not isinstance(self.login_email, str) or not isinstance(self.login_password, str):
             raise ValueError('會員登入設定格式錯誤。')
@@ -116,7 +130,7 @@ class Settings:
             or parts.username or parts.password
         ):
             raise ValueError("請輸入完整的 http:// 或 https:// 網址（不可包含帳號密碼）。")
-        if not self.cinema.strip():
+        if self.url != BOOKING_SITES["誠品"] and not self.cinema.strip():
             raise ValueError("請輸入影城名稱，文字須與網站選項一致。")
         if type(self.tickets) is not int or not 1 <= self.tickets <= 20:
             raise ValueError("票數必須是 1～20 的整數；實際上限仍以網站為準。")

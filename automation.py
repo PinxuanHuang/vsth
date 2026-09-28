@@ -1,5 +1,6 @@
 """Site adapter and browser worker. All Playwright calls stay on one thread."""
 import queue
+import os
 import re
 import sys
 import threading
@@ -9,7 +10,9 @@ from datetime import datetime
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import Error, sync_playwright
-from config import CINEMAS, parse_preferred_seats, parse_showtime
+from config import BOOKING_SITES, CINEMAS, parse_preferred_seats, parse_showtime, settings_path
+from edge_session import desktop_edge
+from eslite import EsliteFlow
 from seating import READ_SEATS, plan_seats, seat_key, seat_label
 from ticket_types import get_ticket_type
 
@@ -711,8 +714,43 @@ class BrowserWorker(threading.Thread):
     def emit(self, kind, text):
         self.events.put((kind, text))
 
+    def run_eslite(self):
+        with sync_playwright() as pw:
+            profile = settings_path().parent / 'eslite-edge-profile'
+            with desktop_edge(pw, self.settings.url, profile, self.stop_event) as browser:
+                if browser is None:
+                    return
+                self.emit('log', '請在誠品視窗手動完成同意與驗證，再點選左側影城。')
+                flow = EsliteFlow(self.settings, self.emit, self.stop_event)
+                while browser.is_connected() and not self.stop_event.is_set():
+                    pages = [page for context in browser.contexts for page in context.pages if not page.is_closed()]
+                    if not pages:
+                        break
+                    try:
+                        self.commands.get_nowait()
+                        flow.arm()
+                    except queue.Empty:
+                        pass
+                    flow.tick(pages)
+                    try:
+                        pages[0].wait_for_timeout(300)
+                    except Error:
+                        if not browser.is_connected():
+                            break
+
     def run(self):
+        done_text = "已停止"
         try:
+            if self.stop_event.is_set():
+                return
+            if self.settings.url == BOOKING_SITES["誠品"]:
+                if self.settings.eslite_movie.strip():
+                    self.run_eslite()
+                    return
+                os.startfile("microsoft-edge:" + target_url(self.settings))
+                self.emit("log", "已交由一般 Edge 開啟誠品，請在瀏覽器完成同意與驗證；該視窗請手動關閉。")
+                done_text = "已在一般 Microsoft Edge 開啟誠品"
+                return
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(channel="msedge", headless=False)
                 try:
@@ -774,4 +812,4 @@ class BrowserWorker(threading.Thread):
             if not self.stop_event.is_set():
                 self.emit("log", f"瀏覽器錯誤：{exc}\n請確認已安裝 Microsoft Edge。")
         finally:
-            self.emit("done", "已停止")
+            self.emit("done", done_text)

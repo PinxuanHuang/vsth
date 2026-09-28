@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from automation import BrowserWorker, apply_settings, resource, select_cinema_and_first_movie, select_showtime, target_url, submit_normal_booking, select_quantity_and_continue
-from config import CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
+from config import BOOKING_SITES, CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
 from ticket_types import TICKET_TYPES, get_ticket_type
 
 
@@ -17,8 +17,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("電影購票助手")
-        self.geometry("820x870")
-        self.minsize(720, 750)
+        self.geometry("820x920")
+        self.minsize(720, 800)
         self.configure(bg="#edf2f8")
         self.worker = None
         self.events = queue.Queue()
@@ -37,13 +37,18 @@ class App(tk.Tk):
         frame.columnconfigure(1, weight=1)
         ttk.Label(frame, text="電影購票助手", font=("Microsoft JhengHei UI", 23, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Label(frame, text="手動進入購票專區後，自動選影城、電影與指定場次。", foreground="#52627a").grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 22))
-        self.variables = {name: tk.StringVar() for name in ("url", "cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector", "login_email", "login_password")}
+        self.variables = {name: tk.StringVar() for name in ("url", "cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector", "login_email", "login_password", "eslite_movie", "eslite_time")}
         self.agree = tk.BooleanVar()
+        self.booking_site = tk.StringVar()
         self.ticket_type = tk.StringVar()
         self.inputs = []
         for row, (label, key) in enumerate((("購票網址", "url"), ("影城名稱", "cinema"), ("購票張數", "tickets")), 2):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 18), pady=7)
-            if key == "cinema":
+            if key == "url":
+                entry = ttk.Combobox(frame, textvariable=self.booking_site, values=list(BOOKING_SITES), state="readonly")
+                entry.bind("<<ComboboxSelected>>", self.update_booking_site)
+                self.site_combo = entry
+            elif key == "cinema":
                 entry = ttk.Combobox(frame, textvariable=self.variables[key], values=["請選擇影城", *CINEMAS], state="readonly", height=15)
                 self.cinema_combo = entry
             elif key == "tickets":
@@ -88,6 +93,16 @@ class App(tk.Tk):
                                          textvariable=self.session_position, values=("第一場", "最後一場"))
         self.session_combo.grid(row=0, column=7, padx=(8, 0))
         self.inputs.append(self.session_combo)
+        eslite_frame = ttk.Frame(date_frame)
+        eslite_frame.grid(row=1, column=0, columnspan=8, sticky="ew", pady=(12, 0))
+        eslite_frame.columnconfigure(1, weight=1)
+        ttk.Label(eslite_frame, text="電影名稱（誠品專用）").grid(row=0, column=0, padx=(0, 10))
+        self.eslite_movie_entry = ttk.Entry(eslite_frame, textvariable=self.variables["eslite_movie"])
+        self.eslite_movie_entry.grid(row=0, column=1, sticky="ew")
+        ttk.Label(eslite_frame, text="場次時間（HH:MM）").grid(row=0, column=2, padx=(12, 8))
+        self.eslite_time_entry = ttk.Entry(eslite_frame, textvariable=self.variables["eslite_time"], width=7)
+        self.eslite_time_entry.grid(row=0, column=3)
+        self.inputs.extend([self.eslite_movie_entry, self.eslite_time_entry])
         tabs = ttk.Notebook(frame)
         tabs.grid(row=7, column=0, columnspan=3, sticky="ew")
         seats = ttk.Frame(tabs, padding=12)
@@ -179,6 +194,14 @@ class App(tk.Tk):
         self.password_entry.configure(show='*')
         for key, variable in self.variables.items():
             variable.set(str(getattr(settings, key)))
+        demo_labels = {"demo://ticket": "本機示範", "demo://seats": "本機座位測試"}
+        if settings.url in demo_labels:
+            self.booking_site.set(demo_labels[settings.url])
+        else:
+            self.booking_site.set(next((name for name, url in BOOKING_SITES.items() if url == settings.url), "威秀"))
+            self.update_booking_site()
+            if settings.url and settings.url not in BOOKING_SITES.values():
+                self.log("原先的購票網址已改為威秀預設入口，可從下拉選單切換網站。")
         self.agree.set(settings.agree)
         self.ticket_type.set(get_ticket_type(settings.ticket_type).label)
         self.seat_mode.set(next(label for label, value in SEAT_MODES.items() if value == settings.seat_mode))
@@ -197,10 +220,22 @@ class App(tk.Tk):
         for key, variable in self.date_vars.items():
             variable.set(f"{getattr(stamp, key):02d}" if stamp else "")
         self.update_days()
+        self.update_site_controls()
         if settings.cinema not in CINEMAS:
             self.variables["cinema"].set("請選擇影城")
             if settings.cinema:
                 self.log("原先的影城名稱不在目前清單中，請重新選擇影城。")
+
+    def update_booking_site(self, event=None):
+        self.variables["url"].set(BOOKING_SITES[self.booking_site.get()])
+        self.update_site_controls()
+
+    def update_site_controls(self, running=False):
+        eslite = self.booking_site.get() == "誠品"
+        for entry in (self.eslite_movie_entry, self.eslite_time_entry):
+            entry.configure(state="normal" if eslite and not running else "disabled")
+        for combo in (self.cinema_combo, self.session_combo):
+            combo.configure(state="disabled" if running or eslite else "readonly")
 
     def update_days(self, event=None):
         year, month = self.date_vars["year"].get(), self.date_vars["month"].get()
@@ -251,8 +286,10 @@ class App(tk.Tk):
         for widget in self.inputs + [self.start_button, self.demo_button]:
             widget.configure(state="disabled" if running else "normal")
         self.cinema_combo.configure(state="disabled" if running else "readonly")
+        self.site_combo.configure(state="disabled" if running else "readonly")
         self.ticket_combo.configure(state="disabled" if running else "readonly")
         self.session_combo.configure(state="disabled" if running else "readonly")
+        self.update_site_controls(running=running)
         self.update_seat_controls(running=running)
         for combo in self.date_combos.values():
             combo.configure(state="disabled" if running else "readonly")
@@ -271,6 +308,9 @@ class App(tk.Tk):
         try:
             values = {key: variable.get() if key == 'login_password' else variable.get().strip()
                       for key, variable in self.variables.items()}
+            values["url"] = BOOKING_SITES.get(self.booking_site.get(), values["url"])
+            if values["url"] == BOOKING_SITES["誠品"] and values["cinema"] == "請選擇影城":
+                values["cinema"] = ""
             try:
                 values["tickets"] = int(values["tickets"])
             except ValueError:
@@ -279,9 +319,11 @@ class App(tk.Tk):
                                 ticket_type=self.selected_ticket_type(),
                                 **self.selected_seat_settings(),
                                 session_position="first" if self.session_position.get() == "第一場" else "last")
-            if settings.url not in ("demo://ticket", "demo://seats"):
+            if settings.url not in ("demo://ticket", "demo://seats", BOOKING_SITES["誠品"]) or (
+                settings.url == BOOKING_SITES["誠品"] and settings.eslite_movie
+            ):
                 settings.showtime = self.selected_showtime()
-            if settings.cinema not in CINEMAS:
+            if settings.url != BOOKING_SITES["誠品"] and settings.cinema not in CINEMAS:
                 raise ValueError("請從下拉選單選擇影城。")
             save_settings(settings)
         except Exception as exc:
@@ -296,7 +338,7 @@ class App(tk.Tk):
     def retry(self):
         if self.worker and self.worker.commands.empty():
             self.worker.commands.put("apply")
-            self.log("已重新啟用流程，等待購票頁；將使用執行時選擇的影城。")
+            self.log("已重新啟用流程，沿用本次執行的設定。")
 
     def stop(self):
         if self.worker:
@@ -337,7 +379,17 @@ def smoke_test(output):
     app = App()
     app.withdraw()
     app.update()
+    app.populate(Settings(url=BOOKING_SITES['誠品'], eslite_movie='測試片名',
+                          eslite_time='13:20', showtime='2028-02-29'))
+    assert app.variables['eslite_movie'].get() == '測試片名'
+    assert app.variables['eslite_time'].get() == '13:20'
+    assert str(app.eslite_movie_entry['state']) == 'normal'
+    assert str(app.session_combo['state']) == 'disabled'
+    app.busy(True)
+    assert str(app.eslite_movie_entry['state']) == 'disabled'
+    app.busy(False)
     app.populate(Settings(cinema="MUVIE CINEMAS 台北松仁", showtime="2028-02-29"))
+    assert str(app.eslite_movie_entry['state']) == 'disabled'
     assert app.selected_showtime() == "2028-02-29"
     assert set(app.date_vars) == {"year", "month", "day"}
     assert app.session_position.get() == "第一場"
