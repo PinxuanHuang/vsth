@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 from credentials import protect_password, unprotect_password
-from ticket_types import DEFAULT_TICKET_TYPE, get_ticket_type
+from ticket_types import (DEFAULT_TICKET_TYPE, DEFAULT_ESLITE_TICKET_TYPE,
+                          get_ticket_type, get_eslite_ticket_type)
 
 
 BOOKING_SITES = {
@@ -73,6 +74,7 @@ class Settings:
     agree: bool = False
     tickets: int = 2
     ticket_type: str = DEFAULT_TICKET_TYPE
+    eslite_ticket_type: str = DEFAULT_ESLITE_TICKET_TYPE
     cinema_selector: str = ""
     tickets_selector: str = ""
     agree_selector: str = ""
@@ -111,6 +113,7 @@ class Settings:
             if not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", self.eslite_time):
                 raise ValueError("誠品場次時間請輸入 HH:MM，例如 13:20。")
         get_ticket_type(self.ticket_type)
+        get_eslite_ticket_type(self.eslite_ticket_type)
         if not isinstance(self.login_email, str) or not isinstance(self.login_password, str):
             raise ValueError('會員登入設定格式錯誤。')
         if self.login_email and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', self.login_email):

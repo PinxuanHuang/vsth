@@ -6,6 +6,7 @@ from datetime import date
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error
+from eslite_tickets import EsliteTicketFlow, ticket_session
 
 
 READ_SELECTION = r"""() => {
@@ -105,14 +106,21 @@ class EsliteFlow:
     def __init__(self, settings, emit, stop, today=None):
         self.settings, self.emit, self.stop = settings, emit, stop
         self.today = today
+        self.attempted_sessions = set()
+        self.page = None
+        self.session_target = None
         self.arm()
 
     def arm(self):
+        resume = (self.page and not self.page.is_closed() and self.session_target
+                  and ticket_session(self.page.url) == ticket_session(self.session_target))
         self.active = True
-        self.page = None
+        if not resume:
+            self.page = None
+            self.session_target = None
         self.movie_target = None
-        self.session_target = None
-        self.deadline = None
+        self.ticket_flow = None
+        self.deadline = time.monotonic() + 30
         self.last_status = None
 
     def status(self, message):
@@ -139,10 +147,18 @@ class EsliteFlow:
             return
         try:
             if self.session_target:
-                if self.page and not self.page.is_closed() and self.page.url == self.session_target:
-                    self.active = False
-                    self.emit('handoff', '已選擇誠品電影與指定場次，後續購票請手動操作')
+                if self.page and not self.page.is_closed() and (
+                    ticket_session(self.page.url) == ticket_session(self.session_target)
+                ):
+                    if self.ticket_flow is None:
+                        self.ticket_flow = EsliteTicketFlow(
+                            self.settings, self.emit, self.stop, self.session_target, self.attempted_sessions)
+                    if self.ticket_flow.tick(self.page):
+                        self.active = False
+                        self.emit('handoff', '已點擊誠品系統選位，請在瀏覽器確認後續頁面；不會自動付款')
                     return
+                if self.ticket_flow is not None:
+                    raise ValueError('票種頁已離開或場次變更，請手動確認後續頁面。')
                 if time.monotonic() > self.deadline:
                     raise ValueError('場次已點擊，但尚未確認進入票種頁；請手動確認，不會重複點擊。')
                 return
@@ -202,5 +218,5 @@ class EsliteFlow:
         except Exception as exc:
             if not self.stop.is_set():
                 self.active = False
-                self.emit('log', f'誠品自動選片已暫停：{exc}')
+                self.emit('log', f'誠品自動購票已暫停：{exc}')
                 self.status('請手動確認頁面，或按「重新套用」')

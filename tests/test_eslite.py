@@ -14,6 +14,7 @@ from playwright.sync_api import Error, sync_playwright
 from automation import BrowserWorker
 from config import BOOKING_SITES, Settings, load_settings, save_settings
 from eslite import EsliteFlow, READ_SELECTION, displayed_date, movie_link, session_link
+from tests.test_eslite_tickets import ticket_fixture
 
 
 BASE = 'https://arthouse.eslite.com/visSelect.aspx'
@@ -96,7 +97,7 @@ class EsliteBrowserTests(unittest.TestCase):
             self.requests.append(route.request.url)
             parts = urlsplit(route.request.url)
             query = parse_qs(parts.query)
-            body = '<h1>票種頁</h1>' if parts.path.lower() == '/visselecttickets.aspx' else fixture('visCinID' in query, 'visMovieName' in query)
+            body = ticket_fixture() if parts.path.lower() == '/visselecttickets.aspx' else fixture('visCinID' in query, 'visMovieName' in query)
             route.fulfill(body=body, content_type='text/html; charset=utf-8')
         self.page.route('**/*', respond)
 
@@ -116,7 +117,27 @@ class EsliteBrowserTests(unittest.TestCase):
         self.flow.tick([self.page])
         self.assertEqual(self.requests.count(SESSION_URL), 1)
         self.assertTrue(any(kind == 'handoff' for kind, _ in self.messages))
-        self.assertTrue(self.page.locator('h1').is_visible())
+        self.page.wait_for_function('posts.length === 1')
+        self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
+        self.assertEqual(self.page.locator('select').first.input_value(), '2')
+        self.flow.arm()
+        self.flow.tick([self.page])
+        self.assertFalse(self.flow.active)
+        self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
+
+    def test_retry_on_ticket_page_before_submission(self):
+        self.page.goto(MOVIE_URL)
+        self.flow.tick([self.page])
+        self.page.locator('.TicketType').first.evaluate("el => el.textContent = '暫時無票310:'")
+        self.flow.tick([self.page])
+        self.assertFalse(self.flow.active)
+        self.assertEqual(self.page.evaluate('posts'), [])
+        self.page.locator('.TicketType').first.evaluate("el => el.textContent = '全票310:'")
+        self.flow.arm()
+        self.flow.tick([self.page])
+        self.flow.tick([self.page])
+        self.page.wait_for_function('posts.length === 1')
+        self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
 
     def test_supplied_dom_uses_chinese_movie_and_adjacent_date_row(self):
         self.page.goto(BASE + '?visSearchBy=cin&visCinID=1001')

@@ -10,7 +10,8 @@ from tkinter.scrolledtext import ScrolledText
 
 from automation import BrowserWorker, apply_settings, resource, select_cinema_and_first_movie, select_showtime, target_url, submit_normal_booking, select_quantity_and_continue
 from config import BOOKING_SITES, CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
-from ticket_types import TICKET_TYPES, get_ticket_type
+from ticket_types import (TICKET_TYPES, ESLITE_TICKET_TYPES,
+                          get_ticket_type, get_eslite_ticket_type)
 
 
 class App(tk.Tk):
@@ -41,6 +42,7 @@ class App(tk.Tk):
         self.agree = tk.BooleanVar()
         self.booking_site = tk.StringVar()
         self.ticket_type = tk.StringVar()
+        self.eslite_ticket_type = tk.StringVar()
         self.inputs = []
         for row, (label, key) in enumerate((("購票網址", "url"), ("影城名稱", "cinema"), ("購票張數", "tickets")), 2):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 18), pady=7)
@@ -204,6 +206,7 @@ class App(tk.Tk):
                 self.log("原先的購票網址已改為威秀預設入口，可從下拉選單切換網站。")
         self.agree.set(settings.agree)
         self.ticket_type.set(get_ticket_type(settings.ticket_type).label)
+        self.eslite_ticket_type.set(get_eslite_ticket_type(settings.eslite_ticket_type).label)
         self.seat_mode.set(next(label for label, value in SEAT_MODES.items() if value == settings.seat_mode))
         self.seat_direction.set("左側優先" if settings.seat_direction == "left" else "右側優先")
         self.seat_contiguous.set(settings.seat_contiguous)
@@ -232,6 +235,10 @@ class App(tk.Tk):
 
     def update_site_controls(self, running=False):
         eslite = self.booking_site.get() == "誠品"
+        self.ticket_combo.configure(
+            textvariable=self.eslite_ticket_type if eslite else self.ticket_type,
+            values=[kind.label for kind in (ESLITE_TICKET_TYPES if eslite else TICKET_TYPES).values()],
+            state="disabled" if running else "readonly")
         for entry in (self.eslite_movie_entry, self.eslite_time_entry):
             entry.configure(state="normal" if eslite and not running else "disabled")
         for combo in (self.cinema_combo, self.session_combo):
@@ -302,6 +309,12 @@ class App(tk.Tk):
                 return key
         raise ValueError('請從下拉選單選擇購票票種。')
 
+    def selected_eslite_ticket_type(self):
+        for key, kind in ESLITE_TICKET_TYPES.items():
+            if kind.label == self.eslite_ticket_type.get():
+                return key
+        raise ValueError('請從下拉選單選擇誠品票種。')
+
     def start(self):
         if self.worker and self.worker.is_alive():
             return
@@ -317,6 +330,7 @@ class App(tk.Tk):
                 raise ValueError("票數必須是 1～20 的整數。") from None
             settings = Settings(**values, agree=self.agree.get(),
                                 ticket_type=self.selected_ticket_type(),
+                                eslite_ticket_type=self.selected_eslite_ticket_type(),
                                 **self.selected_seat_settings(),
                                 session_position="first" if self.session_position.get() == "第一場" else "last")
             if settings.url not in ("demo://ticket", "demo://seats", BOOKING_SITES["誠品"]) or (
@@ -380,14 +394,27 @@ def smoke_test(output):
     app.withdraw()
     app.update()
     app.populate(Settings(url=BOOKING_SITES['誠品'], eslite_movie='測試片名',
-                          eslite_time='13:20', showtime='2028-02-29'))
+                          eslite_time='13:20', showtime='2028-02-29',
+                          ticket_type='special_single_package', eslite_ticket_type='member'))
+    assert app.ticket_combo.get() == '誠品票種／誠品會員'
+    assert app.selected_eslite_ticket_type() == 'member'
+    assert tuple(app.ticket_combo['values']) == tuple(kind.label for kind in ESLITE_TICKET_TYPES.values())
+    app.booking_site.set('威秀')
+    app.update_booking_site()
+    assert app.ticket_combo.get() == '優惠套票／特殊映演單人套票'
+    assert tuple(app.ticket_combo['values']) == tuple(kind.label for kind in TICKET_TYPES.values())
+    app.booking_site.set('誠品')
+    app.update_booking_site()
+    assert app.ticket_combo.get() == '誠品票種／誠品會員'
     assert app.variables['eslite_movie'].get() == '測試片名'
     assert app.variables['eslite_time'].get() == '13:20'
     assert str(app.eslite_movie_entry['state']) == 'normal'
     assert str(app.session_combo['state']) == 'disabled'
     app.busy(True)
     assert str(app.eslite_movie_entry['state']) == 'disabled'
+    assert str(app.ticket_combo['state']) == 'disabled'
     app.busy(False)
+    assert str(app.ticket_combo['state']) == 'readonly'
     app.populate(Settings(cinema="MUVIE CINEMAS 台北松仁", showtime="2028-02-29"))
     assert str(app.eslite_movie_entry['state']) == 'disabled'
     assert app.selected_showtime() == "2028-02-29"
@@ -511,9 +538,31 @@ def smoke_test(output):
             assert page.evaluate('window.paid') is None
             assert login_for_checkout(page, credential_settings, lambda _: None, threading.Event(), discovery_timeout=0) == 'not_required'
             assert len(login_posts) == 1
+            from eslite_tickets import EsliteTicketFlow
+            eslite_url = 'https://arthouse.eslite.com/visSelectTickets.aspx?cinemacode=smoke&txtSessionId=local'
+            eslite_html = '''<meta charset="utf-8"><form><table><tr>
+                <td><span class="TicketType">全票420:</span></td>
+                <td><select identity="smoke-type" price="42000" onchange="
+                    document.querySelector('.TicketTypeSubTotal').value=Number(this.value)*420;
+                    document.querySelector('button').hidden=false;">
+                    <option value="0">0</option><option value="2">2</option></select></td>
+                <td><input class="TicketTypePrice" value="420" readonly></td>
+                <td><input class="TicketTypeSubTotal" value="0" readonly></td>
+                </tr></table><button type="button" hidden onclick="window.clicks=(window.clicks||0)+1">
+                系統選位</button></form>'''
+            page.route('https://arthouse.eslite.com/**', lambda route: route.fulfill(
+                body=eslite_html, content_type='text/html; charset=utf-8'))
+            page.goto(eslite_url)
+            attempted = set()
+            eslite_flow = EsliteTicketFlow(Settings(tickets=2), lambda *_: None,
+                                         threading.Event(), eslite_url, attempted)
+            assert not eslite_flow.tick(page)
+            assert eslite_flow.tick(page)
+            assert page.evaluate('window.clicks') == 1
+            assert len(attempted) == 1
         finally:
             browser.close()
-    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "ticket type settings and locking", "package collapse quantity and continue", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
+    Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "ticket type settings and locking", "site-specific ticket choices", "eslite quantity and system seats", "package collapse quantity and continue", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
 
 
 if __name__ == "__main__":
