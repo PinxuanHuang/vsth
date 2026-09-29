@@ -29,6 +29,7 @@ ESLITE_TICKET_TYPES = {
     'concession': TicketType('誠品票種', '愛心/敬老票'),
     'member': TicketType('誠品票種', '誠品會員'),
     'student_military_police': TicketType('誠品票種', '學生/軍警票'),
+    'single_package': TicketType('誠品票種', '單人套票'),
 }
 
 

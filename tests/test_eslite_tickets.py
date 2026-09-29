@@ -60,6 +60,14 @@ class EsliteTicketSettingsTests(unittest.TestCase):
                     URL + '&txtSessionId=duplicate', URL.replace('visSelectTickets', 'visSelect')):
             self.assertIsNone(ticket_session(url))
 
+    def test_single_package_settings_roundtrip(self):
+        settings = Settings(url=BOOKING_SITES['誠品'], showtime='2026-10-03',
+                            eslite_ticket_type='single_package', ticket_type='special_single_package')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'settings.json'
+            save_settings(settings, path)
+            self.assertEqual(load_settings(path), settings)
+
 
 class EsliteTicketBrowserTests(unittest.TestCase):
     @classmethod
@@ -90,7 +98,7 @@ class EsliteTicketBrowserTests(unittest.TestCase):
                                self.stop, URL, self.attempted)
 
     def test_supplied_dom_and_every_ticket_type(self):
-        for index, key in enumerate(ESLITE_TICKET_TYPES):
+        for index, key in enumerate(('full_price', 'cinephile', 'concession', 'member', 'student_military_police')):
             with self.subTest(key=key):
                 self.page.goto(URL)
                 self.attempted.clear()
@@ -108,6 +116,56 @@ class EsliteTicketBrowserTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, '已點擊過'):
                     self.new_flow().tick(self.page)
                 self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
+
+    def package_row(self, price, name):
+        self.page.locator('.TicketType').first.locator('xpath=ancestor::tr[1]').evaluate('''(row, args) => {
+            row.querySelector('.TicketType').textContent = args.name;
+            row.querySelector('.TicketTypePrice').value = String(args.price);
+            const select = row.querySelector('select');
+            select.setAttribute('price', String(args.price * 100));
+            select.setAttribute('identity', 'dynamic-package');
+            select.removeAttribute('onchange');
+            select.onchange = () => {
+                row.querySelector('.TicketTypeSubTotal').value = String(Number(select.value) * args.price);
+                document.getElementById('divOrderTickets').style.visibility = 'visible';
+            };
+        }''', dict(price=price, name=name))
+
+    def test_single_package_matches_name_without_fixed_price(self):
+        for price, name in ((450, '單人套票450:'), (500, '單人套票500:'), (450, '單人套票')):
+            with self.subTest(price=price, name=name):
+                self.page.goto(URL)
+                self.attempted.clear()
+                self.settings.eslite_ticket_type = 'single_package'
+                self.flow = self.new_flow()
+                self.package_row(price, name)
+                self.assertFalse(self.flow.tick(self.page))
+                self.assertTrue(self.flow.tick(self.page))
+                self.page.wait_for_function('posts.length === 1')
+                self.assertEqual(self.page.locator('.TicketTypeSubTotal').first.input_value(), str(price * 3))
+                self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
+
+    def test_single_package_missing_or_different_name_never_falls_back(self):
+        self.settings.eslite_ticket_type = 'single_package'
+        for name in ('全票450:', '個人套票450:', '特別場單人套票450:'):
+            with self.subTest(name=name):
+                self.package_row(450, name)
+                with self.assertRaisesRegex(ValueError, '找不到唯一'):
+                    self.flow.tick(self.page)
+                self.assertEqual(self.page.evaluate('posts'), [])
+                self.assertEqual(self.page.locator('select').first.input_value(), '0')
+
+    def test_same_package_name_with_two_prices_is_ambiguous(self):
+        self.settings.eslite_ticket_type = 'single_package'
+        self.package_row(450, '單人套票450:')
+        self.page.locator('.TicketType').nth(1).locator('xpath=ancestor::tr[1]').evaluate('''row => {
+            row.querySelector('.TicketType').textContent = '單人套票500:';
+            row.querySelector('.TicketTypePrice').value = '500';
+            row.querySelector('select').setAttribute('price', '50000');
+        }''')
+        with self.assertRaisesRegex(ValueError, '找不到唯一'):
+            self.flow.tick(self.page)
+        self.assertEqual(self.page.evaluate('posts'), [])
 
     def test_dynamic_price_ids_codes_order_and_option_values(self):
         self.page.evaluate(r'''() => {

@@ -396,9 +396,9 @@ def smoke_test(output):
     app.update()
     app.populate(Settings(url=BOOKING_SITES['誠品'], eslite_movie='辣妹過招,秘密會議,特別場,套票場',
                           eslite_time='13:20', showtime='2028-02-29',
-                          ticket_type='special_single_package', eslite_ticket_type='member'))
-    assert app.ticket_combo.get() == '誠品票種／誠品會員'
-    assert app.selected_eslite_ticket_type() == 'member'
+                          ticket_type='special_single_package', eslite_ticket_type='single_package'))
+    assert app.ticket_combo.get() == '誠品票種／單人套票'
+    assert app.selected_eslite_ticket_type() == 'single_package'
     assert tuple(app.ticket_combo['values']) == tuple(kind.label for kind in ESLITE_TICKET_TYPES.values())
     app.booking_site.set('威秀')
     app.update_booking_site()
@@ -410,7 +410,7 @@ def smoke_test(output):
     assert tuple(app.cinema_combo['values']) == ESLITE_CINEMAS
     assert app.cinema_combo.get() == ESLITE_CINEMAS[0]
     assert str(app.cinema_combo['state']) == 'readonly'
-    assert app.ticket_combo.get() == '誠品票種／誠品會員'
+    assert app.ticket_combo.get() == '誠品票種／單人套票'
     assert app.variables['eslite_movie'].get() == '辣妹過招,秘密會議,特別場,套票場'
     from eslite import movie_link
     movie_base = 'https://arthouse.eslite.com/visSelect.aspx?visSearchBy=cin&visCinID=local'
@@ -551,7 +551,7 @@ def smoke_test(output):
             from eslite_tickets import EsliteTicketFlow
             eslite_url = 'https://arthouse.eslite.com/visSelectTickets.aspx?cinemacode=smoke&txtSessionId=local'
             eslite_html = '''<meta charset="utf-8"><form><table><tr>
-                <td><span class="TicketType">全票420:</span></td>
+                <td><span class="TicketType">單人套票420:</span></td>
                 <td><select identity="smoke-type" price="42000" onchange="
                     document.querySelector('.TicketTypeSubTotal').value=Number(this.value)*420;
                     document.querySelector('button').hidden=false;">
@@ -564,7 +564,7 @@ def smoke_test(output):
                 body=eslite_html, content_type='text/html; charset=utf-8'))
             page.goto(eslite_url)
             attempted = set()
-            eslite_flow = EsliteTicketFlow(Settings(tickets=2), lambda *_: None,
+            eslite_flow = EsliteTicketFlow(Settings(tickets=2, eslite_ticket_type='single_package'), lambda *_: None,
                                          threading.Event(), eslite_url, attempted)
             assert not eslite_flow.tick(page)
             assert eslite_flow.tick(page)
