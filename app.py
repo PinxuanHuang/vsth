@@ -98,7 +98,7 @@ class App(tk.Tk):
         eslite_frame = ttk.Frame(date_frame)
         eslite_frame.grid(row=1, column=0, columnspan=8, sticky="ew", pady=(12, 0))
         eslite_frame.columnconfigure(1, weight=1)
-        ttk.Label(eslite_frame, text="電影名稱（誠品專用）").grid(row=0, column=0, padx=(0, 10))
+        ttk.Label(eslite_frame, text="電影關鍵字（誠品、逗號分隔）").grid(row=0, column=0, padx=(0, 10))
         self.eslite_movie_entry = ttk.Entry(eslite_frame, textvariable=self.variables["eslite_movie"])
         self.eslite_movie_entry.grid(row=0, column=1, sticky="ew")
         ttk.Label(eslite_frame, text="場次時間（HH:MM）").grid(row=0, column=2, padx=(12, 8))
@@ -394,7 +394,7 @@ def smoke_test(output):
     app = App()
     app.withdraw()
     app.update()
-    app.populate(Settings(url=BOOKING_SITES['誠品'], eslite_movie='測試片名',
+    app.populate(Settings(url=BOOKING_SITES['誠品'], eslite_movie='辣妹過招,秘密會議,特別場,套票場',
                           eslite_time='13:20', showtime='2028-02-29',
                           ticket_type='special_single_package', eslite_ticket_type='member'))
     assert app.ticket_combo.get() == '誠品票種／誠品會員'
@@ -411,7 +411,12 @@ def smoke_test(output):
     assert app.cinema_combo.get() == ESLITE_CINEMAS[0]
     assert str(app.cinema_combo['state']) == 'readonly'
     assert app.ticket_combo.get() == '誠品票種／誠品會員'
-    assert app.variables['eslite_movie'].get() == '測試片名'
+    assert app.variables['eslite_movie'].get() == '辣妹過招,秘密會議,特別場,套票場'
+    from eslite import movie_link
+    movie_base = 'https://arthouse.eslite.com/visSelect.aspx?visSearchBy=cin&visCinID=local'
+    keyword_snapshot = dict(url=movie_base, cinemas=[dict(href=movie_base)], movies=[
+        dict(text='秘密會議 特別場', href=movie_base + '&visMovieName=opaque', disabled=False)])
+    assert movie_link(keyword_snapshot, app.variables['eslite_movie'].get()) == keyword_snapshot['movies'][0]
     assert app.variables['eslite_time'].get() == '13:20'
     assert str(app.eslite_movie_entry['state']) == 'normal'
     assert str(app.session_combo['state']) == 'readonly'

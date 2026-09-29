@@ -234,6 +234,22 @@ class EsliteBrowserTests(unittest.TestCase):
         self.flow.tick([self.page])
         self.assertEqual(self.page.url, SESSION_URL)
 
+    def test_multiple_keywords_click_one_matching_movie_and_continue(self):
+        self.settings.eslite_movie = '不存在的片名,測試片名,修復版,套票場'
+        self.page.goto(SELECTED)
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, MOVIE_URL)
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, SESSION_URL)
+
+    def test_multiple_keyword_matches_stop_without_clicking_any_movie(self):
+        self.settings.eslite_movie = '測試片名,其他特別場'
+        self.page.goto(SELECTED)
+        self.page.locator('#box_center table').evaluate("el => el.insertAdjacentHTML('beforeend', '<tr><td><a href=\"' + el.querySelector('a').href + '-other\">其他特別場</a></td></tr>')")
+        self.flow.tick([self.page])
+        self.assertFalse(self.flow.active)
+        self.assertEqual(self.page.url, SELECTED)
+
     def test_ambiguous_movie_stops_without_clicking(self):
         self.page.goto(SELECTED)
         self.page.locator('#box_center table').evaluate("el => el.insertAdjacentHTML('beforeend', '<tr><td><a href=\"' + el.querySelector('a').href + '&edition=2\">測試片名：修復版 Special</a></td></tr>')")

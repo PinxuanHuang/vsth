@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import unicodedata
 from datetime import datetime
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -69,6 +70,21 @@ def parse_showtime(value):
         raise ValueError("請選擇有效場次日期（年/月/日）。") from None
 
 
+def parse_eslite_movie_keywords(value):
+    if not isinstance(value, str):
+        raise ValueError('誠品電影關鍵字請輸入文字。')
+    if not value.strip():
+        return []
+    words = []
+    for part in unicodedata.normalize('NFKC', value).split(','):
+        word = ' '.join(part.split()).casefold()
+        if word and word not in words:
+            words.append(word)
+    if not words:
+        raise ValueError('誠品電影關鍵字不能只有逗號；請輸入片名，或留空手動選片。')
+    return words
+
+
 @dataclass
 class Settings:
     url: str = BOOKING_SITES["威秀"]
@@ -112,6 +128,7 @@ class Settings:
         if not isinstance(self.eslite_movie, str) or not isinstance(self.eslite_time, str):
             raise ValueError("誠品電影名稱與場次時間格式錯誤。")
         if self.url == BOOKING_SITES["誠品"]:
+            parse_eslite_movie_keywords(self.eslite_movie)
             if require_showtime or self.showtime:
                 parse_showtime(self.showtime)
             if self.eslite_cinema not in ESLITE_CINEMAS:

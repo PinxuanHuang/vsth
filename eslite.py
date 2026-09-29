@@ -6,6 +6,7 @@ from datetime import date
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error
+from config import parse_eslite_movie_keywords
 from eslite_tickets import EsliteTicketFlow, ticket_session
 from eslite_confirmation import EsliteConfirmationFlow
 
@@ -58,6 +59,7 @@ def cinema_link(snapshot, wanted):
 
 
 def movie_link(snapshot, wanted):
+    keywords = parse_eslite_movie_keywords(wanted)
     cinema = query_value(snapshot['url'], 'visCinID')
     if not cinema or query_value(snapshot['url'], 'visSearchBy') != 'cin':
         return None
@@ -65,18 +67,19 @@ def movie_link(snapshot, wanted):
                for link in snapshot['cinemas']):
         return None
     current = query_value(snapshot['url'], 'visMovieName')
-    if not wanted.strip() and not current:
+    if not keywords and not current:
         return None
     candidates = [link for link in snapshot['movies']
                   if is_selection_page(link['href']) and not link['disabled']
                   and query_value(link['href'], 'visCinID') == cinema
                   and query_value(link['href'], 'visMovieName')
-                  and (normalized(wanted) in normalized(link['text']) if wanted.strip()
+                  and (any(word in normalized(link['text']) for word in keywords) if keywords
                        else query_value(link['href'], 'visMovieName') == current)]
-    exact = [link for link in candidates if normalized(link['text']) == normalized(wanted)]
-    candidates = exact or candidates
+    if len(keywords) == 1:
+        exact = [link for link in candidates if normalized(link['text']) == keywords[0]]
+        candidates = exact or candidates
     if len(candidates) > 1:
-        raise ValueError('有多部電影符合片名，請輸入更完整的中文片名後重新執行。')
+        raise ValueError('有多個電影項目符合關鍵字，請縮小關鍵字範圍後重新執行；不會任選一項。')
     return candidates[0] if candidates else None
 
 
