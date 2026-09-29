@@ -45,11 +45,11 @@ class EsliteTicketSettingsTests(unittest.TestCase):
     def test_independent_settings_roundtrip_and_legacy_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'settings.json'
-            settings = Settings(url=BOOKING_SITES['誠品'], ticket_type='special_single_package',
+            settings = Settings(url=BOOKING_SITES['誠品'], showtime='2032-10-03', ticket_type='special_single_package',
                                 eslite_ticket_type='member')
             save_settings(settings, path)
             self.assertEqual(load_settings(path), settings)
-            path.write_text(json.dumps({'url': BOOKING_SITES['誠品']}), encoding='utf-8')
+            path.write_text(json.dumps({'url': BOOKING_SITES['誠品'], 'showtime': '2032-10-03'}), encoding='utf-8')
             self.assertEqual(load_settings(path).eslite_ticket_type, 'full_price')
             with self.assertRaises(ValueError):
                 Settings(url=BOOKING_SITES['誠品'], eslite_ticket_type='special_single_package').validate()

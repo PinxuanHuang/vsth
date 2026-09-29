@@ -34,6 +34,8 @@ CINEMAS = {
     "高雄大遠百威秀影城": "6|KS",
 }
 
+ESLITE_CINEMAS = ('誠品電影院(松菸)',)
+
 SEAT_MODES = {"手動選位": "manual", "中間排中間": "middle", "後排中間": "back",
               "前排中間": "front", "自訂範圍": "custom"}
 
@@ -71,6 +73,7 @@ def parse_showtime(value):
 class Settings:
     url: str = BOOKING_SITES["威秀"]
     cinema: str = ""
+    eslite_cinema: str = ESLITE_CINEMAS[0]
     agree: bool = False
     tickets: int = 2
     ticket_type: str = DEFAULT_TICKET_TYPE
@@ -104,13 +107,16 @@ class Settings:
             if type(start) is not int or type(end) is not int or not 0 <= start < end <= 100:
                 raise ValueError("座位範圍須為 0～100 的整數，起點必須小於終點。")
 
-    def validate(self):
+    def validate(self, *, require_showtime=True):
         self.validate_seats()
         if not isinstance(self.eslite_movie, str) or not isinstance(self.eslite_time, str):
             raise ValueError("誠品電影名稱與場次時間格式錯誤。")
-        if self.url == BOOKING_SITES["誠品"] and self.eslite_movie.strip():
-            parse_showtime(self.showtime)
-            if not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", self.eslite_time):
+        if self.url == BOOKING_SITES["誠品"]:
+            if require_showtime or self.showtime:
+                parse_showtime(self.showtime)
+            if self.eslite_cinema not in ESLITE_CINEMAS:
+                raise ValueError('請從誠品影城清單選擇影城。')
+            if self.eslite_time and not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", self.eslite_time):
                 raise ValueError("誠品場次時間請輸入 HH:MM，例如 13:20。")
         get_ticket_type(self.ticket_type)
         get_eslite_ticket_type(self.eslite_ticket_type)
@@ -161,7 +167,8 @@ def load_settings(path=None):
             data["showtime"] = parsed.strftime("%Y-%m-%d")
     data['login_password'] = unprotect_password(data.get('protected_login_password', ''))
     result = Settings(**{k: v for k, v in data.items() if k in Settings.__dataclass_fields__})
-    result.validate()
+    # Old manual Eslite settings may lack a date; preserve them for the user to complete.
+    result.validate(require_showtime=False)
     return result
 
 

@@ -52,26 +52,33 @@ class EsliteConfigTests(unittest.TestCase):
             settings = Settings(url=ENTRY, eslite_movie=TITLE, eslite_time='18:45', showtime='2032-10-03')
             save_settings(settings, path)
             self.assertEqual(load_settings(path), settings)
-            path.write_text(json.dumps({'url': ENTRY}), encoding='utf-8')
+            path.write_text(json.dumps({'url': ENTRY, 'showtime': '2032-10-03'}), encoding='utf-8')
             self.assertEqual(load_settings(path).eslite_movie, '')
             for old in ('https://arthouse.eslite.com/visSelect.asp', 'https://arthouse.eslite.com/visSelect.aspx'):
-                path.write_text(json.dumps({'url': old, 'eslite_ticket_type': 'member', 'agree': True}), encoding='utf-8')
+                path.write_text(json.dumps({'url': old, 'showtime': '2032-10-03', 'eslite_ticket_type': 'member', 'agree': True}), encoding='utf-8')
                 migrated = load_settings(path)
                 self.assertEqual(migrated.url, ENTRY)
                 self.assertEqual(migrated.eslite_ticket_type, 'member')
                 self.assertTrue(migrated.agree)
+            path.write_text(json.dumps({'url': ENTRY, 'eslite_ticket_type': 'member'}), encoding='utf-8')
+            legacy = load_settings(path)
+            self.assertEqual(legacy.eslite_ticket_type, 'member')
+            with self.assertRaises(ValueError):
+                save_settings(legacy, path)
 
     def test_auto_requires_date_and_exact_time_but_vieshow_ignores_fields(self):
-        for stamp in ('', '24:00', '9:30', '18:60'):
+        for stamp in ('24:00', '9:30', '18:60'):
             with self.subTest(stamp=stamp), self.assertRaises(ValueError):
                 Settings(url=ENTRY, eslite_movie=TITLE, eslite_time=stamp, showtime='2032-10-03').validate()
         with self.assertRaises(ValueError):
             Settings(url=ENTRY, eslite_movie=TITLE, eslite_time='18:45').validate()
         Settings(cinema='test', eslite_movie=TITLE, eslite_time='ignored').validate()
-        Settings(url=ENTRY).validate()
+        Settings(url=ENTRY, showtime='2032-10-03').validate()
+        with self.assertRaises(ValueError):
+            Settings(url=ENTRY).validate()
 
-    def test_yearless_dates_roll_over_and_explicit_year_is_preserved(self):
-        self.assertEqual(displayed_date('1月2日 星期日', date(2032, 12, 31)), date(2033, 1, 2))
+    def test_yearless_dates_use_requested_year_and_preserve_explicit_year(self):
+        self.assertEqual(displayed_date('1月2日 星期日', date(2032, 12, 31)), date(2032, 1, 2))
         self.assertEqual(displayed_date('2031年10月3日', date(2032, 1, 1)), date(2031, 10, 3))
         self.assertIsNone(displayed_date('2月30日', date(2032, 1, 1)))
 
@@ -101,6 +108,7 @@ class EsliteBrowserTests(unittest.TestCase):
         self.messages = []
         self.stop = threading.Event()
         self.settings = Settings(url=ENTRY, eslite_movie=TITLE, eslite_time='18:45', showtime='2032-10-03')
+        self.settings.eslite_cinema = '任意影城'
         self.flow = EsliteFlow(self.settings, lambda *args: self.messages.append(args), self.stop, today=date(2032, 9, 29))
         def respond(route):
             self.requests.append(route.request.url)
@@ -198,6 +206,33 @@ class EsliteBrowserTests(unittest.TestCase):
         self.assertEqual(len(snapshot['movies']), 21)
         session = session_link(snapshot, '2026-09-30', '13:20', date(2026, 9, 29))
         self.assertEqual(query_value_for_test(session['href'], 'txtSessionId'), '119850')
+
+    def test_full_supplied_page_already_selected_does_not_reclick_cinema_or_movie(self):
+        self.page.goto(BASE + '?visSearchBy=cin&visCinID=1001')
+        self.page.set_content(Path(__file__).with_name('eslite_full_selection_fixture.html').read_text(encoding='utf-8'))
+        self.page.evaluate('history.replaceState(null, "", document.forms[0].action)')
+        self.settings.eslite_cinema = '誠品電影院(松菸)'
+        self.settings.eslite_movie = '八月三十一日，我在奧斯陸'
+        self.settings.eslite_time = ''
+        self.settings.showtime = '2026-09-30'
+        self.settings.session_position = 'last'
+        before = len(self.requests)
+        self.flow.tick([self.page])
+        self.assertEqual(query_value_for_test(self.page.url, 'txtSessionId'), '119850')
+        navigations = [url for url in self.requests[before:]
+                       if urlsplit(url).path.lower() in ('/visselect.aspx', '/visselecttickets.aspx')]
+        self.assertEqual(navigations, [self.page.url])
+
+    def test_blank_movie_and_time_resume_after_manual_movie_choice(self):
+        self.settings.eslite_movie = ''
+        self.settings.eslite_time = ''
+        self.settings.session_position = 'last'
+        self.page.goto(SELECTED)
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, SELECTED)
+        self.page.locator('#box_center a').click()
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, SESSION_URL)
 
     def test_ambiguous_movie_stops_without_clicking(self):
         self.page.goto(SELECTED)

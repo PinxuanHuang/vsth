@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from automation import BrowserWorker, apply_settings, resource, select_cinema_and_first_movie, select_showtime, target_url, submit_normal_booking, select_quantity_and_continue
-from config import BOOKING_SITES, CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
+from config import BOOKING_SITES, CINEMAS, ESLITE_CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
 from ticket_types import (TICKET_TYPES, ESLITE_TICKET_TYPES,
                           get_ticket_type, get_eslite_ticket_type)
 
@@ -38,7 +38,7 @@ class App(tk.Tk):
         frame.columnconfigure(1, weight=1)
         ttk.Label(frame, text="電影購票助手", font=("Microsoft JhengHei UI", 23, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Label(frame, text="手動進入購票專區後，自動選影城、電影與指定場次。", foreground="#52627a").grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 22))
-        self.variables = {name: tk.StringVar() for name in ("url", "cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector", "login_email", "login_password", "eslite_movie", "eslite_time")}
+        self.variables = {name: tk.StringVar() for name in ("url", "cinema", "eslite_cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector", "login_email", "login_password", "eslite_movie", "eslite_time")}
         self.agree = tk.BooleanVar()
         self.booking_site = tk.StringVar()
         self.ticket_type = tk.StringVar()
@@ -235,6 +235,9 @@ class App(tk.Tk):
 
     def update_site_controls(self, running=False):
         eslite = self.booking_site.get() == "誠品"
+        self.cinema_combo.configure(
+            textvariable=self.variables['eslite_cinema' if eslite else 'cinema'],
+            values=ESLITE_CINEMAS if eslite else list(CINEMAS))
         self.ticket_combo.configure(
             textvariable=self.eslite_ticket_type if eslite else self.ticket_type,
             values=[kind.label for kind in (ESLITE_TICKET_TYPES if eslite else TICKET_TYPES).values()],
@@ -242,7 +245,7 @@ class App(tk.Tk):
         for entry in (self.eslite_movie_entry, self.eslite_time_entry):
             entry.configure(state="normal" if eslite and not running else "disabled")
         for combo in (self.cinema_combo, self.session_combo):
-            combo.configure(state="disabled" if running or eslite else "readonly")
+            combo.configure(state="disabled" if running else "readonly")
 
     def update_days(self, event=None):
         year, month = self.date_vars["year"].get(), self.date_vars["month"].get()
@@ -333,9 +336,7 @@ class App(tk.Tk):
                                 eslite_ticket_type=self.selected_eslite_ticket_type(),
                                 **self.selected_seat_settings(),
                                 session_position="first" if self.session_position.get() == "第一場" else "last")
-            if settings.url not in ("demo://ticket", "demo://seats", BOOKING_SITES["誠品"]) or (
-                settings.url == BOOKING_SITES["誠品"] and settings.eslite_movie
-            ):
+            if settings.url not in ("demo://ticket", "demo://seats"):
                 settings.showtime = self.selected_showtime()
             if settings.url != BOOKING_SITES["誠品"] and settings.cinema not in CINEMAS:
                 raise ValueError("請從下拉選單選擇影城。")
@@ -401,15 +402,19 @@ def smoke_test(output):
     assert tuple(app.ticket_combo['values']) == tuple(kind.label for kind in ESLITE_TICKET_TYPES.values())
     app.booking_site.set('威秀')
     app.update_booking_site()
+    assert tuple(app.cinema_combo['values']) == tuple(CINEMAS)
     assert app.ticket_combo.get() == '優惠套票／特殊映演單人套票'
     assert tuple(app.ticket_combo['values']) == tuple(kind.label for kind in TICKET_TYPES.values())
     app.booking_site.set('誠品')
     app.update_booking_site()
+    assert tuple(app.cinema_combo['values']) == ESLITE_CINEMAS
+    assert app.cinema_combo.get() == ESLITE_CINEMAS[0]
+    assert str(app.cinema_combo['state']) == 'readonly'
     assert app.ticket_combo.get() == '誠品票種／誠品會員'
     assert app.variables['eslite_movie'].get() == '測試片名'
     assert app.variables['eslite_time'].get() == '13:20'
     assert str(app.eslite_movie_entry['state']) == 'normal'
-    assert str(app.session_combo['state']) == 'disabled'
+    assert str(app.session_combo['state']) == 'readonly'
     app.busy(True)
     assert str(app.eslite_movie_entry['state']) == 'disabled'
     assert str(app.ticket_combo['state']) == 'disabled'

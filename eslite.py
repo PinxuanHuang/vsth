@@ -42,14 +42,18 @@ def query_value(url, name):
     return values[0] if len(values) == 1 else None
 
 
-def first_cinema(snapshot):
-    if not snapshot['cinemas']:
+def cinema_link(snapshot, wanted):
+    matches = [link for link in snapshot['cinemas']
+               if normalized(wanted) in normalized(link['text'])]
+    if not matches:
         return None
-    link = snapshot['cinemas'][0]
+    if len(matches) != 1:
+        raise ValueError('有多家影城符合設定名稱，請手動確認。')
+    link = matches[0]
     if (link['disabled'] or not is_selection_page(link['href'])
             or query_value(link['href'], 'visSearchBy') != 'cin'
             or not query_value(link['href'], 'visCinID')):
-        raise ValueError('左側第一家影城連結不可用；不會跳過改選其他影城。')
+        raise ValueError('設定的影城連結不可用；不會改選其他影城。')
     return link
 
 
@@ -60,11 +64,15 @@ def movie_link(snapshot, wanted):
     if not any(is_selection_page(link['href']) and query_value(link['href'], 'visCinID') == cinema
                for link in snapshot['cinemas']):
         return None
+    current = query_value(snapshot['url'], 'visMovieName')
+    if not wanted.strip() and not current:
+        return None
     candidates = [link for link in snapshot['movies']
                   if is_selection_page(link['href']) and not link['disabled']
                   and query_value(link['href'], 'visCinID') == cinema
                   and query_value(link['href'], 'visMovieName')
-                  and normalized(wanted) in normalized(link['text'])]
+                  and (normalized(wanted) in normalized(link['text']) if wanted.strip()
+                       else query_value(link['href'], 'visMovieName') == current)]
     exact = [link for link in candidates if normalized(link['text']) == normalized(wanted)]
     candidates = exact or candidates
     if len(candidates) > 1:
@@ -79,39 +87,50 @@ def displayed_date(text, today):
         return None
     year, month, day = match.groups()
     month, day = int(month), int(day)
-    # Yearless listings refer to the next occurrence, including December -> January.
-    year = int(year) if year else today.year + ((month, day) < (today.month, today.day))
+    # The caller supplies the requested year; never roll a past month into next year.
+    year = int(year) if year else today.year
     try:
         return date(year, month, day)
     except ValueError:
         return None
 
 
-def session_link(snapshot, wanted_date, wanted_time, today=None):
-    today = today or date.today()
+def session_link(snapshot, wanted_date, wanted_time='', today=None, session_position='first'):
     target_date = date.fromisoformat(wanted_date)
     cinema = query_value(snapshot['url'], 'visCinID')
-    matches = []
+    if session_position not in ('first', 'last'):
+        raise ValueError('請選擇第一場或最後一場。')
+    groups = []
     for rows in snapshot['tables']:
         for index, row in enumerate(rows[:-1]):
-            if displayed_date(row['text'], today) != target_date:
+            if displayed_date(row['text'], target_date) != target_date:
                 continue
             next_row = rows[index + 1]
-            if displayed_date(next_row['text'], today) is not None:
+            if displayed_date(next_row['text'], target_date) is not None:
                 continue
+            matches = []
             for link in next_row['links']:
                 stamp = re.match(r'^(\d{1,2}):([0-5]\d)(?=\s|$)', normalized(link['title'] or link['text']))
-                if not stamp or f'{int(stamp[1]):02d}:{stamp[2]}' != wanted_time or link['disabled']:
+                if not stamp or int(stamp[1]) > 23:
                     continue
-                parts = urlsplit(link['href'])
-                if (parts.scheme == 'https' and parts.netloc.lower() == 'arthouse.eslite.com'
-                        and parts.path.lower() == '/visselecttickets.aspx'
-                        and query_value(link['href'], 'cinemacode') == cinema
-                        and query_value(link['href'], 'txtSessionId')):
+                if not wanted_time or f'{int(stamp[1]):02d}:{stamp[2]}' == wanted_time:
                     matches.append(link)
-    if len(matches) > 1:
+            groups.append(matches)
+    if len(groups) > 1:
+        raise ValueError('指定日期有多組場次清單，請手動確認。')
+    matches = groups[0] if groups else []
+    if wanted_time and len(matches) > 1:
         raise ValueError('同日期同時間有多個場次，請手動確認影廳；程式不會任選一場。')
-    return matches[0] if matches else None
+    if not matches:
+        return None
+    link = matches[0 if wanted_time or session_position == 'first' else -1]
+    parts = urlsplit(link['href'])
+    if (link['disabled'] or parts.scheme != 'https' or parts.netloc.lower() != 'arthouse.eslite.com'
+            or parts.path.lower() != '/visselecttickets.aspx'
+            or not cinema or query_value(link['href'], 'cinemacode') != cinema
+            or not query_value(link['href'], 'txtSessionId')):
+        return None
+    return link
 
 
 class EsliteFlow:
@@ -197,7 +216,7 @@ class EsliteFlow:
             elif len(available) > 1:
                 raise ValueError('有多個誠品選片分頁，請只保留要操作的分頁後重新套用。')
             else:
-                self.status('請先手動登入與完成驗證，再點網站「訂票」；進入選片頁後自動選擇第一家影城')
+                self.status('請先手動登入與完成驗證，再點網站「訂票」；進入選片頁後依設定選擇影城')
                 return
             try:
                 snapshot = page.evaluate(READ_SELECTION)
@@ -207,13 +226,13 @@ class EsliteFlow:
                 )):
                     return
                 raise
-            cinema = first_cinema(snapshot)
+            cinema = cinema_link(snapshot, self.settings.eslite_cinema)
             if cinema is None:
-                self.status('等待左側影城清單')
+                self.status('等待左側符合設定的影城')
                 return
             self.page = page
             if self.cinema_target and self.cinema_target != cinema['href']:
-                raise ValueError('左側第一家影城已變更，請確認後重新套用。')
+                raise ValueError('設定影城的連結已變更，請確認後重新套用。')
             selected_cinema = (query_value(snapshot['url'], 'visSearchBy') == 'cin'
                                and query_value(snapshot['url'], 'visCinID') == query_value(cinema['href'], 'visCinID'))
             if not selected_cinema:
@@ -228,12 +247,13 @@ class EsliteFlow:
                 self.cinema_target = cinema['href']
                 self.deadline = time.monotonic() + 30
                 self.click(page, '#box_left', cinema)
-                self.emit('log', f"已選擇誠品第一家影城：{cinema['text']}")
+                self.emit('log', f"已選擇誠品影城：{cinema['text']}")
                 return
             self.cinema_target = cinema['href']
             link = movie_link(snapshot, self.settings.eslite_movie)
             if not link:
-                self.status('等待符合設定片名的電影清單')
+                self.status('等待符合設定片名的電影清單' if self.settings.eslite_movie.strip()
+                            else '未設定片名，請在網頁選擇電影；選好後自動選擇場次')
                 return
             self.page = page
             target = link['href']
@@ -253,16 +273,18 @@ class EsliteFlow:
                 self.emit('log', f"已選擇誠品電影：{link['text']}")
                 return
             self.movie_target = target
-            session = session_link(snapshot, self.settings.showtime, self.settings.eslite_time, self.today)
+            session = session_link(snapshot, self.settings.showtime, self.settings.eslite_time,
+                                   self.today, self.settings.session_position)
             if not session:
-                self.status('等待指定日期與時間的可選場次')
+                self.status('等待指定日期與時間的可選場次' if self.settings.eslite_time
+                            else '等待指定日期的首場或末場可選場次')
                 return
             if page.url != snapshot['url']:
                 return
             self.session_target = session['href']
             self.deadline = time.monotonic() + 30
             self.click(page, '#box_right', session)
-            self.emit('log', f'已點選場次：{self.settings.showtime} {self.settings.eslite_time}')
+            self.emit('log', f'已點選場次：{self.settings.showtime} {session["text"]}')
         except Exception as exc:
             if not self.stop.is_set():
                 self.active = False

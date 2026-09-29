@@ -16,21 +16,18 @@ class BrowserLaunchTests(unittest.TestCase):
         self.assertEqual(target_url(Settings()), VIESHOW_URL)
         self.assertEqual(list(BOOKING_SITES.values()), [VIESHOW_URL, ESLITE_URL])
 
-    def test_eslite_hands_off_to_regular_edge(self):
+    def test_eslite_without_movie_still_monitors_for_manual_movie_selection(self):
         events = queue.Queue()
         worker = BrowserWorker(Settings(url=ESLITE_URL), events)
-        with patch("automation.os.startfile") as open_url, patch("automation.sync_playwright") as playwright:
+        with patch("automation.os.startfile") as open_url, patch.object(worker, 'run_eslite') as run:
             worker.run()
-        open_url.assert_called_once_with("microsoft-edge:" + ESLITE_URL)
-        playwright.assert_not_called()
-        messages = list(events.queue)
-        self.assertEqual([kind for kind, _ in messages], ["log", "done"])
-        self.assertIn("Microsoft Edge", messages[-1][1])
+        run.assert_called_once()
+        open_url.assert_not_called()
 
     def test_edge_open_failure_is_reported_and_worker_finishes(self):
         events = queue.Queue()
         worker = BrowserWorker(Settings(url=ESLITE_URL), events)
-        with patch("automation.os.startfile", side_effect=OSError("test launch failure")):
+        with patch.object(worker, 'run_eslite', side_effect=OSError("test launch failure")):
             worker.run()
         messages = list(events.queue)
         self.assertEqual(messages[-1][0], "done")
