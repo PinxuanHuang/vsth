@@ -105,6 +105,8 @@ class EsliteBrowserTests(unittest.TestCase):
         self.page = self.browser.new_page()
         self.requests = []
         self.system_posts = []
+        self.movies_available = True
+        self.sessions_available = True
         self.messages = []
         self.stop = threading.Event()
         self.settings = Settings(url=ENTRY, eslite_movie=TITLE, eslite_time='18:45', showtime='2032-10-03')
@@ -114,7 +116,9 @@ class EsliteBrowserTests(unittest.TestCase):
             self.requests.append(route.request.url)
             parts = urlsplit(route.request.url)
             query = parse_qs(parts.query)
-            body = ticket_fixture() if parts.path.lower() == '/visselecttickets.aspx' else fixture('visCinID' in query, 'visMovieName' in query)
+            body = ticket_fixture() if parts.path.lower() == '/visselecttickets.aspx' else fixture(
+                'visCinID' in query and self.movies_available,
+                'visMovieName' in query and self.sessions_available)
             if route.request.url == CONFIRMATION_URL:
                 body = confirmation_fixture()
                 self.system_posts.append(route.request.url)
@@ -187,7 +191,7 @@ class EsliteBrowserTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 1)
         self.assertTrue(self.flow.active)
 
-    def test_cinema_click_does_not_repeat_when_navigation_fails(self):
+    def test_cinema_navigation_timeout_schedules_reload_instead_of_reclicking(self):
         self.page.goto(BASE)
         self.page.locator('#box_left a').evaluate('el => el.onclick = event => event.preventDefault()')
         self.flow.tick([self.page])
@@ -195,7 +199,9 @@ class EsliteBrowserTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 1)
         self.flow.deadline = 0
         self.flow.tick([self.page])
-        self.assertFalse(self.flow.active)
+        self.assertTrue(self.flow.active)
+        self.assertIsNotNone(self.flow.retry_at)
+        self.assertEqual(len(self.requests), 1)
 
     def test_supplied_dom_uses_chinese_movie_and_adjacent_date_row(self):
         self.page.goto(BASE + '?visSearchBy=cin&visCinID=1001')
@@ -277,8 +283,138 @@ class EsliteBrowserTests(unittest.TestCase):
         self.flow.tick([self.page])
         self.assertEqual(self.page.url, SELECTED)
         self.page.set_content(fixture())
+        self.flow.retry_at = 0
+        self.flow.tick([self.page])
+        self.flow.tick([self.page])
         self.flow.tick([self.page])
         self.assertEqual(self.page.url, MOVIE_URL)
+
+    def test_missing_movie_reloads_once_per_retry_and_reselects_cinema(self):
+        self.movies_available = False
+        self.page.goto(SELECTED)
+        self.flow.tick([self.page])
+        self.assertIsNotNone(self.flow.retry_at)
+        self.flow.retry_at = None
+        with patch('eslite.time.monotonic', return_value=100):
+            self.flow.retry_selection(self.page, 'missing')
+        self.assertEqual(self.flow.retry_at, 101)
+        before = len(self.requests)
+        with patch('eslite.time.monotonic', return_value=100.99):
+            self.flow.tick([self.page])
+        self.assertEqual(len(self.requests), before)
+        self.flow.retry_at = 0
+        with patch.object(self.page, 'reload', wraps=self.page.reload) as reload:
+            self.flow.tick([self.page])
+            self.assertTrue(self.flow.reselect_cinema)
+            self.flow.tick([self.page])
+            self.flow.tick([self.page])
+            self.assertIsNotNone(self.flow.retry_at)
+            self.assertEqual(self.requests.count(SELECTED), 3)
+            self.movies_available = True
+            self.flow.retry_at = 0
+            self.flow.tick([self.page])
+            self.flow.tick([self.page])
+            self.flow.tick([self.page])
+            self.assertEqual(self.page.url, MOVIE_URL)
+            self.flow.tick([self.page])
+            self.assertEqual(self.page.url, SESSION_URL)
+            self.flow.tick([self.page])
+            self.flow.tick([self.page])
+            self.page.wait_for_url(CONFIRMATION_URL)
+            self.flow.tick([self.page])
+            self.flow.tick([self.page])
+            self.assertEqual(reload.call_count, 2)
+            self.assertEqual(self.requests.count(SESSION_URL), 1)
+            self.assertEqual(len(self.system_posts), 1)
+            self.assertFalse(self.flow.active)
+
+    def test_missing_session_restarts_cinema_movie_session_sequence(self):
+        self.sessions_available = False
+        self.page.goto(MOVIE_URL)
+        self.flow.tick([self.page])
+        self.assertIsNotNone(self.flow.retry_at)
+        self.sessions_available = True
+        self.flow.retry_at = 0
+        self.flow.tick([self.page])
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, SELECTED)
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, MOVIE_URL)
+        self.flow.tick([self.page])
+        self.assertEqual(self.page.url, SESSION_URL)
+
+    def test_retry_pauses_for_challenge_even_at_selection_url(self):
+        self.movies_available = False
+        self.page.goto(SELECTED)
+        self.flow.tick([self.page])
+        self.flow.retry_at = 0
+        self.page.set_content('<div id="challenge-stage">Verify</div>')
+        before = len(self.requests)
+        self.flow.tick([self.page])
+        self.flow.tick([self.page])
+        self.assertEqual(len(self.requests), before)
+        self.assertTrue(self.flow.active)
+        self.page.set_content(fixture(False))
+        self.flow.tick([self.page])
+        self.assertEqual(self.flow.retry_count, 1)
+
+    def test_stop_and_login_navigation_cancel_pending_reload(self):
+        self.movies_available = False
+        self.page.goto(SELECTED)
+        self.flow.tick([self.page])
+        self.flow.retry_at = 0
+        before = len(self.requests)
+        self.stop.set()
+        self.flow.tick([self.page])
+        self.assertEqual(len(self.requests), before)
+        self.stop.clear()
+        self.page.goto(ENTRY)
+        before = len(self.requests)
+        self.flow.tick([self.page])
+        self.assertEqual(len(self.requests), before)
+        self.assertIsNone(self.flow.retry_at)
+
+    def test_blank_movie_does_not_reload_user_selection(self):
+        self.settings.eslite_movie = ''
+        self.page.goto(SELECTED)
+        for _ in range(3):
+            self.flow.tick([self.page])
+        self.assertIsNone(self.flow.retry_at)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_late_ticket_navigation_cancels_retry_without_reloading_ticket_page(self):
+        self.page.goto(MOVIE_URL)
+        self.page.locator('#box_right a').evaluate_all('els => els.forEach(el => el.onclick = e => e.preventDefault())')
+        self.flow.tick([self.page])
+        self.flow.deadline = 0
+        self.flow.tick([self.page])
+        self.assertIsNotNone(self.flow.retry_at)
+        self.flow.retry_at = 0
+        self.page.goto(SESSION_URL)
+        with patch.object(self.page, 'reload') as reload:
+            self.flow.tick([self.page])
+        reload.assert_not_called()
+        self.assertIsNone(self.flow.retry_at)
+        self.assertIsNotNone(self.flow.ticket_flow)
+
+    def test_reload_network_error_keeps_loop_active(self):
+        self.movies_available = False
+        self.page.goto(SELECTED)
+        self.flow.tick([self.page])
+        self.flow.retry_at = 0
+        with patch.object(self.page, 'reload', side_effect=Error('net::ERR_CONNECTION_RESET')):
+            self.flow.tick([self.page])
+        self.assertTrue(self.flow.active)
+        self.assertIsNotNone(self.flow.retry_at)
+
+    def test_ticket_failure_does_not_restart_selection_loop(self):
+        self.page.goto(MOVIE_URL)
+        self.flow.tick([self.page])
+        self.page.locator('.TicketType').first.evaluate("el => el.textContent='其他票種310:'")
+        self.flow.tick([self.page])
+        self.assertFalse(self.flow.active)
+        self.assertIsNone(self.flow.retry_at)
+        self.assertEqual(self.page.url, SESSION_URL)
 
     def test_manual_navigation_during_snapshot_does_not_disarm_flow(self):
         self.page.goto(SELECTED)

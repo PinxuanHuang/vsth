@@ -37,6 +37,10 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+/test-results/
+# Browser profiles and memory dumps can contain credentials.
+edge-profile/
+*.dmp
 htmlcov/
 .tox/
 .nox/

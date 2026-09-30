@@ -18,6 +18,9 @@ READ_SELECTION = r"""() => {
             disabled: a.getAttribute('aria-disabled') === 'true' || a.hasAttribute('disabled')}));
     return {
         url: location.href,
+        challenge: !!document.querySelector('#challenge-stage, #challenge-running')
+            || /just a moment|attention required.*cloudflare/i.test(document.title)
+            || Array.from(document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]')).some(visible),
         cinemas: links(document.querySelector('#box_left')),
         movies: links(document.querySelector('#box_center')),
         tables: Array.from(document.querySelectorAll('#box_right table')).filter(visible)
@@ -160,6 +163,10 @@ class EsliteFlow:
         self.movie_target = None
         self.cinema_target = None
         self.ticket_flow = None
+        self.retry_at = None
+        self.retry_url = None
+        self.retry_count = 0
+        self.reselect_cinema = False
         self.deadline = time.monotonic() + 30
         self.last_status = None
 
@@ -167,6 +174,45 @@ class EsliteFlow:
         if message != self.last_status:
             self.emit('status', message)
             self.last_status = message
+
+    def retry_selection(self, page, reason):
+        if (not self.settings.eslite_movie.strip() or self.ticket_flow is not None
+                or self.confirmation_flow is not None or page is None or page.is_closed()
+                or not is_selection_page(page.url)):
+            self.status(reason)
+            return
+        self.page = page
+        if self.retry_at is None:
+            self.retry_at = time.monotonic() + 1
+            self.retry_url = page.url
+        self.status(f'{reason}；1 秒後重新整理並重試影院、電影與場次')
+
+    def reload_if_due(self):
+        if self.retry_at is None:
+            return False
+        page = self.page
+        if page is None or page.is_closed():
+            raise ValueError('重試中的誠品分頁已關閉。')
+        # A manual navigation or a late session navigation takes precedence over a retry.
+        if not is_selection_page(page.url) or page.url != self.retry_url:
+            self.retry_at = self.retry_url = None
+            return False
+        if time.monotonic() < self.retry_at:
+            return True
+        snapshot = page.evaluate(READ_SELECTION)
+        if snapshot['challenge']:
+            self.status('偵測到網站驗證，暫停重整；請手動完成驗證')
+            return True
+        if self.stop.is_set() or page.url != snapshot['url']:
+            return True
+        self.retry_at = self.retry_url = None
+        self.cinema_target = self.movie_target = self.session_target = None
+        self.reselect_cinema = True
+        self.deadline = time.monotonic() + 30
+        self.retry_count += 1
+        self.status(f'第 {self.retry_count} 次重新整理；重新選擇影院、電影與場次')
+        page.reload(wait_until='domcontentloaded', timeout=10000)
+        return True
 
     def click(self, page, scope, link):
         if self.stop.is_set():
@@ -191,6 +237,8 @@ class EsliteFlow:
                     self.active = False
                     self.emit('handoff', '誠品確認頁已就緒，請自行檢查訂單與條款，再點「確定」；程式不送出交易')
                 return
+            if self.reload_if_due():
+                return
             if self.session_target:
                 if self.page and not self.page.is_closed() and (
                     ticket_session(self.page.url) == ticket_session(self.session_target)
@@ -206,6 +254,10 @@ class EsliteFlow:
                 if self.ticket_flow is not None:
                     raise ValueError('票種頁已離開或場次變更，請手動確認後續頁面。')
                 if time.monotonic() > self.deadline:
+                    if self.page and not self.page.is_closed() and is_selection_page(self.page.url):
+                        self.retry_selection(self.page, '場次導頁未完成')
+                        if self.retry_at is not None:
+                            return
                     raise ValueError('場次已點擊，但尚未確認進入票種頁；請手動確認，不會重複點擊。')
                 return
             available = [p for p in pages if not p.is_closed() and is_selection_page(p.url)]
@@ -229,25 +281,32 @@ class EsliteFlow:
                 )):
                     return
                 raise
+            if snapshot['challenge']:
+                self.status('偵測到網站驗證，請手動完成；不自動重新整理')
+                return
             cinema = cinema_link(snapshot, self.settings.eslite_cinema)
             if cinema is None:
-                self.status('等待左側符合設定的影城')
+                self.retry_selection(page, '等待左側符合設定的影城')
                 return
             self.page = page
             if self.cinema_target and self.cinema_target != cinema['href']:
                 raise ValueError('設定影城的連結已變更，請確認後重新套用。')
             selected_cinema = (query_value(snapshot['url'], 'visSearchBy') == 'cin'
                                and query_value(snapshot['url'], 'visCinID') == query_value(cinema['href'], 'visCinID'))
-            if not selected_cinema:
+            if not selected_cinema or self.reselect_cinema:
                 if self.cinema_target:
                     if self.movie_target:
                         raise ValueError('已選影城被更改，請確認後重新套用。')
                     if time.monotonic() > self.deadline:
+                        self.retry_selection(page, '影院導頁未完成')
+                        if self.retry_at is not None:
+                            return
                         raise ValueError('影城已點擊，但頁面尚未更新；不會重複點擊。')
                     return
                 if page.url != snapshot['url']:
                     return
                 self.cinema_target = cinema['href']
+                self.reselect_cinema = False
                 self.deadline = time.monotonic() + 30
                 self.click(page, '#box_left', cinema)
                 self.emit('log', f"已選擇誠品影城：{cinema['text']}")
@@ -255,8 +314,8 @@ class EsliteFlow:
             self.cinema_target = cinema['href']
             link = movie_link(snapshot, self.settings.eslite_movie)
             if not link:
-                self.status('等待符合設定片名的電影清單' if self.settings.eslite_movie.strip()
-                            else '未設定片名，請在網頁選擇電影；選好後自動選擇場次')
+                self.retry_selection(page, '找不到符合設定關鍵字的電影' if self.settings.eslite_movie.strip()
+                                     else '未設定片名，請在網頁選擇電影；選好後自動選擇場次')
                 return
             self.page = page
             target = link['href']
@@ -266,6 +325,9 @@ class EsliteFlow:
             if not selected:
                 if self.movie_target:
                     if time.monotonic() > self.deadline:
+                        self.retry_selection(page, '電影導頁未完成')
+                        if self.retry_at is not None:
+                            return
                         raise ValueError('電影已點擊，但頁面尚未更新；請確認後重新套用。')
                     return
                 if page.url != snapshot['url']:
@@ -279,8 +341,8 @@ class EsliteFlow:
             session = session_link(snapshot, self.settings.showtime, self.settings.eslite_time,
                                    self.today, self.settings.session_position)
             if not session:
-                self.status('等待指定日期與時間的可選場次' if self.settings.eslite_time
-                            else '等待指定日期的首場或末場可選場次')
+                self.retry_selection(page, '等待指定日期與時間的可選場次' if self.settings.eslite_time
+                                     else '等待指定日期的首場或末場可選場次')
                 return
             if page.url != snapshot['url']:
                 return
@@ -290,6 +352,12 @@ class EsliteFlow:
             self.emit('log', f'已點選場次：{self.settings.showtime} {session["text"]}')
         except Exception as exc:
             if not self.stop.is_set():
+                if (isinstance(exc, Error) and self.settings.eslite_movie.strip()
+                        and self.ticket_flow is None and self.confirmation_flow is None
+                        and self.page and not self.page.is_closed() and is_selection_page(self.page.url)):
+                    self.retry_at = self.retry_url = None
+                    self.retry_selection(self.page, '選片頁載入或點擊未完成')
+                    return
                 self.active = False
                 self.emit('log', f'誠品自動購票已暫停：{exc}')
                 self.status('請手動確認頁面，或按「重新套用」')
