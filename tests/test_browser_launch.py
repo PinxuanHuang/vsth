@@ -14,7 +14,7 @@ class BrowserLaunchTests(unittest.TestCase):
     def test_vieshow_uses_canonical_entry(self):
         self.assertEqual(Settings().url, VIESHOW_URL)
         self.assertEqual(target_url(Settings()), VIESHOW_URL)
-        self.assertEqual(list(BOOKING_SITES.values()), [VIESHOW_URL, ESLITE_URL])
+        self.assertEqual(list(BOOKING_SITES.values()), [VIESHOW_URL, ESLITE_URL, "https://www.miramarcinemas.tw/Member/Login"])
 
     def test_eslite_without_movie_still_monitors_for_manual_movie_selection(self):
         events = queue.Queue()

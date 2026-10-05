@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from automation import BrowserWorker, apply_settings, resource, select_cinema_and_first_movie, select_showtime, target_url, submit_normal_booking, select_quantity_and_continue
-from config import BOOKING_SITES, CINEMAS, ESLITE_CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
+from config import BOOKING_SITES, CINEMAS, ESLITE_CINEMAS, MIRAMAR_CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
 from ticket_types import (TICKET_TYPES, ESLITE_TICKET_TYPES,
                           get_ticket_type, get_eslite_ticket_type)
 
@@ -40,6 +40,7 @@ class App(tk.Tk):
         ttk.Label(frame, text="手動進入購票專區後，自動選影城、電影與指定場次。", foreground="#52627a").grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 22))
         self.variables = {name: tk.StringVar() for name in ("url", "cinema", "eslite_cinema", "tickets", "cinema_selector", "tickets_selector", "agree_selector", "login_email", "login_password", "eslite_movie", "eslite_time")}
         self.agree = tk.BooleanVar()
+        self.variables['miramar_cinema'] = tk.StringVar()
         self.booking_site = tk.StringVar()
         self.ticket_type = tk.StringVar()
         self.eslite_ticket_type = tk.StringVar()
@@ -98,7 +99,7 @@ class App(tk.Tk):
         eslite_frame = ttk.Frame(date_frame)
         eslite_frame.grid(row=1, column=0, columnspan=8, sticky="ew", pady=(12, 0))
         eslite_frame.columnconfigure(1, weight=1)
-        ttk.Label(eslite_frame, text="電影關鍵字（誠品、逗號分隔）").grid(row=0, column=0, padx=(0, 10))
+        ttk.Label(eslite_frame, text="電影關鍵字（誠品／美麗華）").grid(row=0, column=0, padx=(0, 10))
         self.eslite_movie_entry = ttk.Entry(eslite_frame, textvariable=self.variables["eslite_movie"])
         self.eslite_movie_entry.grid(row=0, column=1, sticky="ew")
         ttk.Label(eslite_frame, text="場次時間（HH:MM）").grid(row=0, column=2, padx=(12, 8))
@@ -235,15 +236,16 @@ class App(tk.Tk):
 
     def update_site_controls(self, running=False):
         eslite = self.booking_site.get() == "誠品"
+        miramar = self.booking_site.get() == "美麗華影城"
         self.cinema_combo.configure(
-            textvariable=self.variables['eslite_cinema' if eslite else 'cinema'],
-            values=ESLITE_CINEMAS if eslite else list(CINEMAS))
+            textvariable=self.variables['miramar_cinema' if miramar else 'eslite_cinema' if eslite else 'cinema'],
+            values=MIRAMAR_CINEMAS if miramar else ESLITE_CINEMAS if eslite else list(CINEMAS))
         self.ticket_combo.configure(
             textvariable=self.eslite_ticket_type if eslite else self.ticket_type,
             values=[kind.label for kind in (ESLITE_TICKET_TYPES if eslite else TICKET_TYPES).values()],
-            state="disabled" if running else "readonly")
+            state="disabled" if running or miramar else "readonly")
         for entry in (self.eslite_movie_entry, self.eslite_time_entry):
-            entry.configure(state="normal" if eslite and not running else "disabled")
+            entry.configure(state="normal" if (eslite or miramar) and not running else "disabled")
         for combo in (self.cinema_combo, self.session_combo):
             combo.configure(state="disabled" if running else "readonly")
 
@@ -338,7 +340,7 @@ class App(tk.Tk):
                                 session_position="first" if self.session_position.get() == "第一場" else "last")
             if settings.url not in ("demo://ticket", "demo://seats"):
                 settings.showtime = self.selected_showtime()
-            if settings.url != BOOKING_SITES["誠品"] and settings.cinema not in CINEMAS:
+            if settings.url not in (BOOKING_SITES["誠品"], BOOKING_SITES["美麗華影城"]) and settings.cinema not in CINEMAS:
                 raise ValueError("請從下拉選單選擇影城。")
             save_settings(settings)
         except Exception as exc:

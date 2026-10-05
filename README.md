@@ -1,12 +1,12 @@
 # 電影購票助手
 
-本次誠品自動重試版位於 `dist/eslite-selection-retry/MovieTicketAssistant.exe`。設定片名後，尚無符合的影院、電影或場次時會重新整理並重走選片流程；威秀流程不變。
+本次美麗華版位於 `dist/miramar-selection/MovieTicketAssistant.exe`。手動登入後，首頁依設定選影城、電影、日期、場次並點擊搜尋；停在票種頁交由手動操作。既有威秀與誠品流程維持不變。
 
 繁體中文 Windows 桌面程式，使用 Python 3.11、Tkinter 與 Playwright。目標為 Windows 10／11 x64，電腦需已安裝 Microsoft Edge；執行打包版本不需安裝 Python。
 
 ## 使用
 
-1. 開啟 `dist/eslite-selection-retry/MovieTicketAssistant.exe`（本次新版）。
+1. 開啟 `dist/miramar-selection/MovieTicketAssistant.exe`（本次新版）。美麗華使用獨立 Edge 設定檔，請手動登入。需設定影城、電影關鍵字與日期；電影關鍵字及 HH:MM 時間與誠品共用。關鍵字可用逗號分隔，任一命中即可，單一完整片名優先；多筆模糊命中會暫停。時間未填或找不到時，使用清單中第一／最後一個可選場次（不是跨影廳依時間排序）；同時間多筆亦依第一／最後選擇。系統排除停用與隱藏項目，搜尋後不自動購票。停止會關閉本次專用視窗。
 2. 從「購票網址」選擇「威秀」或「誠品」，影城與票種清單會一起切換並分別保存。誠品目前只有「誠品電影院(松菸)」。兩站都需指定年月日與第一場／最後一場；誠品的 `HH:MM` 時間可留空，有填則優先比對時間，沒填則使用首場／末場設定。威秀不使用誠品片名或時間欄位。
 3. 選擇票種、張數與自動同意開關後按「儲存並執行」。誠品會開啟 `https://arthouse.eslite.com/member/Login.aspx?RedirectUrl=%2fvisMbrBookings.aspx`，請先手動登入與驗證，再點網站「訂票」。程式依設定選影城與片名；片名留空時等你在網頁選電影，再自動接續指定日期的場次、票數與系統選位。確認頁依開關勾選條款，最後由你檢查並點「確定」。
 4. 威秀請自行點選要購票的專區。進入 `vsTicketingSP` 或 `vsTicketingSP數字` 購票頁後，程式會自動選影城，再點電影清單第一項。路徑取自實際進入的專區；一般 `vsTicketing` 入口仍等待你選擇搶票專區。

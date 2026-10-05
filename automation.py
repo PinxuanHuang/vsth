@@ -13,6 +13,7 @@ from playwright.sync_api import Error, sync_playwright
 from config import BOOKING_SITES, CINEMAS, parse_preferred_seats, parse_showtime, settings_path
 from edge_session import desktop_edge
 from eslite import EsliteFlow
+from miramar import MiramarFlow
 from seating import READ_SEATS, plan_seats, seat_key, seat_label
 from ticket_types import get_ticket_type
 
@@ -738,10 +739,37 @@ class BrowserWorker(threading.Thread):
                         if not browser.is_connected():
                             break
 
+    def run_miramar(self):
+        with sync_playwright() as pw:
+            profile = settings_path().parent / 'miramar-edge-profile'
+            with desktop_edge(pw, self.settings.url, profile, self.stop_event) as browser:
+                if browser is None:
+                    return
+                self.emit('log', '請手動登入美麗華；回到首頁後將依設定選擇影城、電影、日期與場次。')
+                flow = MiramarFlow(self.settings, self.emit, self.stop_event)
+                while browser.is_connected() and not self.stop_event.is_set():
+                    pages = [p for context in browser.contexts for p in context.pages if not p.is_closed()]
+                    if not pages:
+                        break
+                    try:
+                        self.commands.get_nowait()
+                        flow.arm()
+                    except queue.Empty:
+                        pass
+                    flow.tick(pages)
+                    try:
+                        pages[0].wait_for_timeout(300)
+                    except Error:
+                        if not browser.is_connected():
+                            break
+
     def run(self):
         done_text = "已停止"
         try:
             if self.stop_event.is_set():
+                return
+            if self.settings.url == BOOKING_SITES["美麗華影城"]:
+                self.run_miramar()
                 return
             if self.settings.url == BOOKING_SITES["誠品"]:
                 self.run_eslite()

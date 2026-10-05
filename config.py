@@ -15,6 +15,7 @@ from ticket_types import (DEFAULT_TICKET_TYPE, DEFAULT_ESLITE_TICKET_TYPE,
 BOOKING_SITES = {
     "威秀": "https://www.vscinemas.com.tw/hold",
     "誠品": "https://arthouse.eslite.com/member/Login.aspx?RedirectUrl=%2fvisMbrBookings.aspx",
+    "美麗華影城": "https://www.miramarcinemas.tw/Member/Login",
 }
 
 
@@ -36,6 +37,7 @@ CINEMAS = {
 }
 
 ESLITE_CINEMAS = ('誠品電影院(松菸)',)
+MIRAMAR_CINEMAS = ('美麗華影城',)
 
 SEAT_MODES = {"手動選位": "manual", "中間排中間": "middle", "後排中間": "back",
               "前排中間": "front", "自訂範圍": "custom"}
@@ -90,6 +92,7 @@ class Settings:
     url: str = BOOKING_SITES["威秀"]
     cinema: str = ""
     eslite_cinema: str = ESLITE_CINEMAS[0]
+    miramar_cinema: str = MIRAMAR_CINEMAS[0]
     agree: bool = False
     tickets: int = 2
     ticket_type: str = DEFAULT_TICKET_TYPE
@@ -136,6 +139,16 @@ class Settings:
             if self.eslite_time and not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", self.eslite_time):
                 raise ValueError("誠品場次時間請輸入 HH:MM，例如 13:20。")
         get_ticket_type(self.ticket_type)
+        if self.url == BOOKING_SITES['美麗華影城']:
+            words = parse_eslite_movie_keywords(self.eslite_movie)
+            if require_showtime and not words:
+                raise ValueError('請輸入美麗華電影關鍵字。')
+            if require_showtime or self.showtime:
+                parse_showtime(self.showtime)
+            if self.miramar_cinema not in MIRAMAR_CINEMAS:
+                raise ValueError('請從美麗華影城清單選擇影城。')
+            if self.eslite_time and not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', self.eslite_time):
+                raise ValueError('美麗華場次時間請輸入 HH:MM。')
         get_eslite_ticket_type(self.eslite_ticket_type)
         if not isinstance(self.login_email, str) or not isinstance(self.login_password, str):
             raise ValueError('會員登入設定格式錯誤。')
@@ -156,7 +169,7 @@ class Settings:
             or parts.username or parts.password
         ):
             raise ValueError("請輸入完整的 http:// 或 https:// 網址（不可包含帳號密碼）。")
-        if self.url != BOOKING_SITES["誠品"] and not self.cinema.strip():
+        if self.url not in (BOOKING_SITES["誠品"], BOOKING_SITES["美麗華影城"]) and not self.cinema.strip():
             raise ValueError("請輸入影城名稱，文字須與網站選項一致。")
         if type(self.tickets) is not int or not 1 <= self.tickets <= 20:
             raise ValueError("票數必須是 1～20 的整數；實際上限仍以網站為準。")
