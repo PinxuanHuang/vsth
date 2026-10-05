@@ -12,6 +12,7 @@ from automation import BrowserWorker, apply_settings, resource, select_cinema_an
 from config import BOOKING_SITES, CINEMAS, ESLITE_CINEMAS, MIRAMAR_CINEMAS, SEAT_MODES, Settings, load_settings, parse_showtime, save_settings
 from ticket_types import (TICKET_TYPES, ESLITE_TICKET_TYPES,
                           get_ticket_type, get_eslite_ticket_type)
+from ticket_types import MIRAMAR_TICKET_TYPES, get_miramar_ticket_type
 
 
 class App(tk.Tk):
@@ -44,6 +45,7 @@ class App(tk.Tk):
         self.booking_site = tk.StringVar()
         self.ticket_type = tk.StringVar()
         self.eslite_ticket_type = tk.StringVar()
+        self.miramar_ticket_type = tk.StringVar()
         self.inputs = []
         for row, (label, key) in enumerate((("購票網址", "url"), ("影城名稱", "cinema"), ("購票張數", "tickets")), 2):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 18), pady=7)
@@ -208,6 +210,7 @@ class App(tk.Tk):
         self.agree.set(settings.agree)
         self.ticket_type.set(get_ticket_type(settings.ticket_type).label)
         self.eslite_ticket_type.set(get_eslite_ticket_type(settings.eslite_ticket_type).label)
+        self.miramar_ticket_type.set(get_miramar_ticket_type(settings.miramar_ticket_type).label)
         self.seat_mode.set(next(label for label, value in SEAT_MODES.items() if value == settings.seat_mode))
         self.seat_direction.set("左側優先" if settings.seat_direction == "left" else "右側優先")
         self.seat_contiguous.set(settings.seat_contiguous)
@@ -237,13 +240,15 @@ class App(tk.Tk):
     def update_site_controls(self, running=False):
         eslite = self.booking_site.get() == "誠品"
         miramar = self.booking_site.get() == "美麗華影城"
+        self.ticket_combo.grid_configure(row=1 if miramar else 0, column=0 if miramar else 2,
+                                         columnspan=3 if miramar else 1)
         self.cinema_combo.configure(
             textvariable=self.variables['miramar_cinema' if miramar else 'eslite_cinema' if eslite else 'cinema'],
             values=MIRAMAR_CINEMAS if miramar else ESLITE_CINEMAS if eslite else list(CINEMAS))
         self.ticket_combo.configure(
-            textvariable=self.eslite_ticket_type if eslite else self.ticket_type,
-            values=[kind.label for kind in (ESLITE_TICKET_TYPES if eslite else TICKET_TYPES).values()],
-            state="disabled" if running or miramar else "readonly")
+            textvariable=self.miramar_ticket_type if miramar else self.eslite_ticket_type if eslite else self.ticket_type,
+            values=[kind.label for kind in (MIRAMAR_TICKET_TYPES if miramar else ESLITE_TICKET_TYPES if eslite else TICKET_TYPES).values()],
+            state="disabled" if running else "readonly")
         for entry in (self.eslite_movie_entry, self.eslite_time_entry):
             entry.configure(state="normal" if (eslite or miramar) and not running else "disabled")
         for combo in (self.cinema_combo, self.session_combo):
@@ -334,6 +339,7 @@ class App(tk.Tk):
             except ValueError:
                 raise ValueError("票數必須是 1～20 的整數。") from None
             settings = Settings(**values, agree=self.agree.get(),
+                                miramar_ticket_type=self.selected_miramar_ticket_type(),
                                 ticket_type=self.selected_ticket_type(),
                                 eslite_ticket_type=self.selected_eslite_ticket_type(),
                                 **self.selected_seat_settings(),
@@ -351,6 +357,12 @@ class App(tk.Tk):
         self.log("設定已儲存，正在啟動新的瀏覽器工作階段。")
         self.worker = BrowserWorker(settings, self.events)
         self.worker.start()
+
+    def selected_miramar_ticket_type(self):
+        for key, kind in MIRAMAR_TICKET_TYPES.items():
+            if kind.label == self.miramar_ticket_type.get():
+                return key
+        raise ValueError('請從下拉選單選擇美麗華票種。')
 
     def retry(self):
         if self.worker and self.worker.commands.empty():

@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from credentials import protect_password, unprotect_password
 from ticket_types import (DEFAULT_TICKET_TYPE, DEFAULT_ESLITE_TICKET_TYPE,
                           get_ticket_type, get_eslite_ticket_type)
+from ticket_types import DEFAULT_MIRAMAR_TICKET_TYPE, get_miramar_ticket_type
 
 
 BOOKING_SITES = {
@@ -97,6 +98,7 @@ class Settings:
     tickets: int = 2
     ticket_type: str = DEFAULT_TICKET_TYPE
     eslite_ticket_type: str = DEFAULT_ESLITE_TICKET_TYPE
+    miramar_ticket_type: str = DEFAULT_MIRAMAR_TICKET_TYPE
     cinema_selector: str = ""
     tickets_selector: str = ""
     agree_selector: str = ""
@@ -140,6 +142,7 @@ class Settings:
                 raise ValueError("誠品場次時間請輸入 HH:MM，例如 13:20。")
         get_ticket_type(self.ticket_type)
         if self.url == BOOKING_SITES['美麗華影城']:
+            get_miramar_ticket_type(self.miramar_ticket_type)
             words = parse_eslite_movie_keywords(self.eslite_movie)
             if require_showtime and not words:
                 raise ValueError('請輸入美麗華電影關鍵字。')

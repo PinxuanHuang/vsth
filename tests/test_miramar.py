@@ -8,6 +8,7 @@ from playwright.sync_api import sync_playwright
 from automation import BrowserWorker
 from config import BOOKING_SITES, Settings
 from miramar import MiramarFlow, choose_option
+from tests.test_miramar_tickets import fixture as ticket_fixture
 
 
 def settings(**kwargs):
@@ -77,7 +78,7 @@ class MiramarTests(unittest.TestCase):
                         requests = []
                         def route_request(route):
                             requests.append(route.request.url)
-                            route.fulfill(body=FIXTURE if route.request.url.endswith('/') else '<p>Next step</p>', content_type='text/html')
+                            route.fulfill(body=FIXTURE if route.request.url.endswith('/') else ticket_fixture(session=expected), content_type='text/html')
                         context.route('**/*', route_request)
                         page = context.new_page()
                         page.goto('https://www.miramarcinemas.tw/Member/Login')

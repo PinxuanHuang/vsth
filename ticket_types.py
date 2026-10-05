@@ -43,3 +43,26 @@ def get_eslite_ticket_type(key):
     if not isinstance(key, str) or key not in ESLITE_TICKET_TYPES:
         raise ValueError('誠品票種設定無效，請重新選擇購票票種。')
     return ESLITE_TICKET_TYPES[key]
+
+
+DEFAULT_MIRAMAR_TICKET_TYPE = 'event'
+MIRAMAR_TICKET_TYPES = {
+    'event': TicketType('美麗華票種', '活動票'),
+    'dolby_senior': TicketType('美麗華票種', 'DOLBY敬老票'),
+    'dolby_disability': TicketType('美麗華票種', 'DOLBY愛心票'),
+    'double_hotdog': TicketType('美麗華票種', '雙人電影熱狗套票'),
+    'double_churros': TicketType('美麗華票種', '雙人電影吉拿套票'),
+    'single_hotdog': TicketType('美麗華票種', '單人電影熱狗套票'),
+    'single_churros': TicketType('美麗華票種', '單人電影吉拿套票'),
+    'full_price': TicketType('美麗華票種', '網路全票'),
+    'student': TicketType('美麗華票種', '網路 學生/軍警票'),
+    'senior': TicketType('美麗華票種', '敬老票'),
+    'disability': TicketType('美麗華票種', '愛心票'),
+    'voucher': TicketType('美麗華票種', '團體電影優惠券(IMAX、杜比影院及3D須加價)'),
+}
+
+
+def get_miramar_ticket_type(key):
+    if not isinstance(key, str) or key not in MIRAMAR_TICKET_TYPES:
+        raise ValueError('美麗華票種設定無效，請重新選擇購票票種。')
+    return MIRAMAR_TICKET_TYPES[key]
