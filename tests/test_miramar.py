@@ -90,9 +90,9 @@ class MiramarTests(unittest.TestCase):
                         for _ in range(40):
                             flow.tick([page])
                             page.wait_for_timeout(100)
-                            if flow.paused:
+                            if flow.paused or flow.stage == 6:
                                 break
-                        self.assertTrue(any(m[0] == 'handoff' for m in messages), messages)
+                        self.assertEqual(flow.stage, 6, messages)
                         self.assertIn('session=' + expected, page.url)
                         for _ in range(3):
                             flow.tick([page])

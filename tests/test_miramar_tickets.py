@@ -49,8 +49,8 @@ class MiramarTicketTests(unittest.TestCase):
     def prepare(self):
         return prepare_tickets(self.page, self.settings, 'movie-new', 'session-b', threading.Event(), lambda _: None)
 
-    def test_all_twelve_names_with_changed_codes(self):
-        self.assertEqual(len(MIRAMAR_TICKET_TYPES), 12)
+    def test_all_names_with_changed_codes(self):
+        self.assertEqual(len(MIRAMAR_TICKET_TYPES), 18)
         for index, key in enumerate(MIRAMAR_TICKET_TYPES):
             self.page.set_content(fixture())
             self.settings.miramar_ticket_type = key

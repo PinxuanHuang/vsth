@@ -59,6 +59,12 @@ MIRAMAR_TICKET_TYPES = {
     'senior': TicketType('美麗華票種', '敬老票'),
     'disability': TicketType('美麗華票種', '愛心票'),
     'voucher': TicketType('美麗華票種', '團體電影優惠券(IMAX、杜比影院及3D須加價)'),
+    'dolby_double_hotdog': TicketType('美麗華票種', 'DOLBY雙人熱狗套票'),
+    'dolby_double_churros': TicketType('美麗華票種', 'DOLBY雙人吉拿套票'),
+    'dolby_single_hotdog': TicketType('美麗華票種', 'DOLBY單人熱狗套票'),
+    'dolby_single_churros': TicketType('美麗華票種', 'DOLBY單人吉拿套票'),
+    'dolby_full_price': TicketType('美麗華票種', '網路DOLBY全票'),
+    'dolby_student': TicketType('美麗華票種', '網路DOLBY 學生/軍警票'),
 }
 
 

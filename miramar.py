@@ -1,4 +1,4 @@
-"""Miramar homepage and ticket quantities; stop after the ticket form's next step."""
+"""Miramar booking through seat selection; leave subsequent checkout to the user."""
 import re
 import time
 import unicodedata
@@ -7,6 +7,7 @@ from urllib.parse import urlsplit, parse_qs
 
 from config import parse_eslite_movie_keywords
 from miramar_tickets import prepare_tickets
+from miramar_seats import prepare_seats
 
 
 SELECTS = ('sel_cinema', 'sel_movie', 'sel_show_time', 'sel_show_session')
@@ -99,10 +100,29 @@ class MiramarFlow:
                                          self.stop, lambda text: self.emit('log', text))
                 if button is not None and not self.stop.is_set():
                     self.stage = 6
-                    self.paused = True
+                    self.deadline = time.monotonic() + self.timeout
                     button.click(timeout=3000, no_wait_after=True)
-                    self.emit('handoff', '美麗華已選擇票種與張數並點擊下一步，後續請手動操作')
+                    self.emit('log', '美麗華已選擇票種與張數，等待座位頁。')
                     return
+        elif self.stage == 6:
+            parts = urlsplit(page.url)
+            if (parts.scheme == 'https' and parts.netloc.lower() == 'www.miramarcinemas.tw'
+                    and parts.path.lower() == '/booking/seatplan'):
+                if page.locator('#booking_data #seatTable').count() == 0:
+                    if time.monotonic() < self.deadline:
+                        return
+                self.paused = True
+                try:
+                    button = prepare_seats(page, self.settings, self.selected[1], self.selected[3],
+                                           self.stop, lambda text: self.emit('log', text))
+                    if button is not None and not self.stop.is_set():
+                        self.stage = 7
+                        button.click(timeout=3000, no_wait_after=True)
+                        self.emit('handoff', '美麗華已選足座位並點擊下一步，後續請手動確認')
+                except Exception as exc:
+                    self.emit('log', f'美麗華選位交由手動操作：{exc}')
+                    self.emit('handoff', '請在瀏覽器完成選位；程式不會送出不足的座位')
+                return
         else:
             if not is_home(page.url):
                 raise ValueError('已離開首頁，未繼續操作。')
