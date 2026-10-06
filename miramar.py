@@ -7,7 +7,8 @@ from urllib.parse import urlsplit, parse_qs
 
 from config import parse_eslite_movie_keywords
 from miramar_tickets import prepare_tickets
-from miramar_seats import prepare_seats
+from miramar_seats import prepare_seats, READ_MIRAMAR_SEATS
+from miramar_confirm import prepare_confirmation
 
 
 SELECTS = ('sel_cinema', 'sel_movie', 'sel_show_time', 'sel_show_session')
@@ -66,6 +67,7 @@ class MiramarFlow:
         self.paused = False
         self.snapshot = None
         self.deadline = None
+        self.confirm_seats = set()
 
     def tick(self, pages):
         if self.paused or self.stop.is_set():
@@ -116,12 +118,37 @@ class MiramarFlow:
                     button = prepare_seats(page, self.settings, self.selected[1], self.selected[3],
                                            self.stop, lambda text: self.emit('log', text))
                     if button is not None and not self.stop.is_set():
+                        seats = page.locator('#booking_data #seatTable').evaluate(READ_MIRAMAR_SEATS)['seats']
+                        self.confirm_seats = {(*s['area'].split(':', 1), s['backendRow'], s['backendCol'], s['row'], s['label'])
+                                              for s in seats if s['selected']}
                         self.stage = 7
+                        self.deadline = time.monotonic() + self.timeout
                         button.click(timeout=3000, no_wait_after=True)
-                        self.emit('handoff', '美麗華已選足座位並點擊下一步，後續請手動確認')
+                        self.paused = False
+                        self.emit('log', '美麗華已選足座位，等待購票確認頁。')
                 except Exception as exc:
                     self.emit('log', f'美麗華選位交由手動操作：{exc}')
                     self.emit('handoff', '請在瀏覽器完成選位；程式不會送出不足的座位')
+                return
+        elif self.stage == 7:
+            parts = urlsplit(page.url)
+            if (parts.scheme == 'https' and parts.netloc.lower() == 'www.miramarcinemas.tw'
+                    and parts.path.lower() == '/booking/confirm'):
+                self.paused = True
+                try:
+                    button = prepare_confirmation(page, self.settings, self.selected[1], self.selected[3],
+                                                  self.confirm_seats, self.stop)
+                    if button is not None and not self.stop.is_set():
+                        self.stage = 8
+                        button.click(timeout=3000, no_wait_after=True)
+                        self.emit('handoff', '已點擊美麗華線上付款；請手動完成後續金流，程式不會重複送出')
+                    elif not self.stop.is_set():
+                        self.emit('handoff', '美麗華確認資料已填妥；未啟用自動同意，請手動確認並付款')
+                except ValueError as exc:
+                    self.emit('log', str(exc))
+                    self.emit('handoff', '美麗華購票確認需手動處理，未自動重試')
+                except Exception:
+                    self.emit('handoff', '美麗華確認操作未完成或送出結果不明，請手動確認；不會重複送出')
                 return
         else:
             if not is_home(page.url):

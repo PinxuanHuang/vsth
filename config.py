@@ -99,6 +99,9 @@ class Settings:
     ticket_type: str = DEFAULT_TICKET_TYPE
     eslite_ticket_type: str = DEFAULT_ESLITE_TICKET_TYPE
     miramar_ticket_type: str = DEFAULT_MIRAMAR_TICKET_TYPE
+    miramar_name: str = field(default='', repr=False)
+    miramar_phone: str = field(default='', repr=False)
+    miramar_carrier: str = field(default='', repr=False)
     cinema_selector: str = ""
     tickets_selector: str = ""
     agree_selector: str = ""
@@ -142,6 +145,8 @@ class Settings:
                 raise ValueError("誠品場次時間請輸入 HH:MM，例如 13:20。")
         get_ticket_type(self.ticket_type)
         if self.url == BOOKING_SITES['美麗華影城']:
+            if any(not isinstance(getattr(self, key), str) for key in ('miramar_name', 'miramar_phone', 'miramar_carrier')):
+                raise ValueError('美麗華確認資料請輸入文字。')
             get_miramar_ticket_type(self.miramar_ticket_type)
             words = parse_eslite_movie_keywords(self.eslite_movie)
             if require_showtime and not words:

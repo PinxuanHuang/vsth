@@ -117,6 +117,20 @@ class App(tk.Tk):
         member = ttk.Frame(tabs, padding=12)
         member.columnconfigure(1, weight=1)
         tabs.add(member, text="會員登入")
+        confirmation = ttk.Frame(tabs, padding=12)
+        confirmation.columnconfigure(1, weight=1)
+        tabs.add(confirmation, text='美麗華購票確認')
+        self.miramar_confirmation_inputs = []
+        for row, (label, key) in enumerate((('會員姓名', 'miramar_name'), ('手機號碼', 'miramar_phone'),
+                                             ('載具號碼（選填）', 'miramar_carrier'))):
+            self.variables[key] = tk.StringVar()
+            ttk.Label(confirmation, text=label).grid(row=row, column=0, sticky='w', padx=(0, 15), pady=5)
+            entry = ttk.Entry(confirmation, textvariable=self.variables[key])
+            entry.grid(row=row, column=1, sticky='ew', pady=5)
+            self.miramar_confirmation_inputs.append(entry)
+            self.inputs.append(entry)
+        ttk.Label(confirmation, text='發票類型').grid(row=3, column=0, sticky='w', pady=5)
+        ttk.Label(confirmation, text='個人').grid(row=3, column=1, sticky='w', pady=5)
         for row, (label, key) in enumerate((("帳號（信箱）", "login_email"), ("密碼", "login_password"))):
             ttk.Label(member, text=label).grid(row=row, column=0, sticky="w", padx=(0, 15), pady=5)
             entry = ttk.Entry(member, textvariable=self.variables[key], show='*' if key == 'login_password' else '')
@@ -240,6 +254,8 @@ class App(tk.Tk):
     def update_site_controls(self, running=False):
         eslite = self.booking_site.get() == "誠品"
         miramar = self.booking_site.get() == "美麗華影城"
+        for entry in self.miramar_confirmation_inputs:
+            entry.configure(state='normal' if miramar and not running else 'disabled')
         self.ticket_combo.grid_configure(row=1 if miramar else 0, column=0 if miramar else 2,
                                          columnspan=3 if miramar else 1)
         self.cinema_combo.configure(
