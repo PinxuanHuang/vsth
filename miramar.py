@@ -4,6 +4,7 @@ import time
 import unicodedata
 from datetime import datetime
 from urllib.parse import urlsplit, parse_qs
+from playwright.sync_api import Error as PlaywrightError
 
 from config import parse_eslite_movie_keywords
 from miramar_tickets import prepare_tickets
@@ -68,12 +69,35 @@ class MiramarFlow:
         self.snapshot = None
         self.deadline = None
         self.confirm_seats = set()
+        self.retry_until = None
+        self.retry_at = None
+
+    def retry_home(self):
+        now = time.monotonic()
+        if self.retry_until is None:
+            self.retry_until = now + 300
+            self.emit('log', '美麗華電影或日期尚未選取成功，每秒重新整理重試，最多 5 分鐘。')
+        if now >= self.retry_until:
+            raise ValueError('美麗華首頁重試已達 5 分鐘，請手動確認或重新套用。')
+        if self.retry_at is None:
+            self.retry_at = now + 1
 
     def tick(self, pages):
         if self.paused or self.stop.is_set():
             return
         try:
             self.advance(pages)
+        except PlaywrightError as exc:
+            if (self.stage in (1, 2) and self.page is not None and not self.page.is_closed()
+                    and is_home(self.page.url) and not self.stop.is_set()):
+                try:
+                    self.retry_home()
+                    return
+                except ValueError as timeout:
+                    exc = timeout
+            self.paused = True
+            self.emit('log', f'美麗華流程暫停：{exc}')
+            self.emit('status', '請確認頁面後重新套用；不會重複搜尋')
         except Exception as exc:
             self.paused = True
             self.emit('log', f'美麗華流程暫停：{exc}')
@@ -92,6 +116,25 @@ class MiramarFlow:
         page = self.page
         if page.is_closed():
             raise ValueError('購票分頁已關閉。')
+        if self.stage <= 2 and self.retry_until is not None:
+            now = time.monotonic()
+            if not is_home(page.url):
+                raise ValueError('已離開首頁，停止自動重新整理。')
+            if now >= self.retry_until:
+                raise ValueError('美麗華首頁重試已達 5 分鐘，請手動確認或重新套用。')
+            if self.retry_at is not None and now >= self.retry_at:
+                if self.stop.is_set():
+                    return
+                self.stage, self.selected, self.snapshot = 0, [], None
+                self.retry_at = None
+                self.deadline = now + self.timeout
+                try:
+                    page.reload(wait_until='domcontentloaded', timeout=max(1, min(5000, int((self.retry_until-now)*1000))))
+                except PlaywrightError:
+                    if page.is_closed() or not is_home(page.url):
+                        raise
+                    self.retry_home()
+                return
         if self.stage == 5:
             parts = urlsplit(page.url)
             query = parse_qs(parts.query)
@@ -162,7 +205,13 @@ class MiramarFlow:
                     options = control.evaluate(READ_OPTIONS)
                     # Require two consecutive snapshots before choosing a fallback session.
                     if options and options == self.snapshot:
-                        choice = choose_option(self.stage, options, self.settings)
+                        try:
+                            choice = choose_option(self.stage, options, self.settings)
+                        except ValueError:
+                            if self.stage not in (1, 2):
+                                raise
+                            self.retry_home()
+                            return
                         if choice:
                             if self.stop.is_set():
                                 return
@@ -170,10 +219,16 @@ class MiramarFlow:
                             self.emit('log', f'美麗華已選擇{LABELS[self.stage]}：{choice["text"]}')
                             self.selected.append(choice['value'])
                             self.stage += 1
+                            self.retry_at = None
+                            if self.stage == 3:
+                                self.retry_until = None
                             self.snapshot = None
                             self.deadline = time.monotonic() + self.timeout
                             return
                     self.snapshot = options
+                if self.stage in (1, 2) or (self.stage == 0 and self.retry_until is not None):
+                    self.retry_home()
+                    return
             else:
                 button = page.locator('#ibooking').get_by_role('button', name='搜尋')
                 if button.count() == 1 and button.is_visible() and button.is_enabled():
