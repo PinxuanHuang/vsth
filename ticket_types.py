@@ -65,6 +65,14 @@ MIRAMAR_TICKET_TYPES = {
     'dolby_single_churros': TicketType('美麗華票種', 'DOLBY單人吉拿套票'),
     'dolby_full_price': TicketType('美麗華票種', '網路DOLBY全票'),
     'dolby_student': TicketType('美麗華票種', '網路DOLBY 學生/軍警票'),
+    'imax_double_hotdog': TicketType('美麗華票種', 'IMAX雙人熱狗套票'),
+    'imax_double_churros': TicketType('美麗華票種', 'IMAX雙人吉拿套票'),
+    'imax_single_hotdog': TicketType('美麗華票種', 'IMAX單人熱狗套票'),
+    'imax_single_churros': TicketType('美麗華票種', 'IMAX單人吉拿套票'),
+    'imax_full_price': TicketType('美麗華票種', '網路IMAX全票'),
+    'imax_student': TicketType('美麗華票種', '網路IMAX 學生/軍警票'),
+    'imax_senior': TicketType('美麗華票種', 'IMAX敬老票'),
+    'imax_disability': TicketType('美麗華票種', 'IMAX愛心票'),
 }
 
 
