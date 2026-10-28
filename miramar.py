@@ -3,6 +3,7 @@ import re
 import time
 import unicodedata
 from datetime import datetime
+from dataclasses import replace
 from urllib.parse import urlsplit, parse_qs
 from playwright.sync_api import Error as PlaywrightError
 
@@ -69,8 +70,12 @@ class MiramarFlow:
         self.snapshot = None
         self.deadline = None
         self.confirm_seats = set()
+        self.confirm_ticket_type = self.settings.miramar_ticket_type
         self.retry_until = None
         self.retry_at = None
+
+    def remember_ticket(self, key):
+        self.confirm_ticket_type = key
 
     def retry_home(self):
         now = time.monotonic()
@@ -142,7 +147,7 @@ class MiramarFlow:
                     and parts.path.lower() == '/booking/tickettype'
                     and query.get('id') == [self.selected[1]] and query.get('session') == [self.selected[3]]):
                 button = prepare_tickets(page, self.settings, self.selected[1], self.selected[3],
-                                         self.stop, lambda text: self.emit('log', text))
+                                         self.stop, lambda text: self.emit('log', text), self.remember_ticket)
                 if button is not None and not self.stop.is_set():
                     self.stage = 6
                     self.deadline = time.monotonic() + self.timeout
@@ -179,7 +184,8 @@ class MiramarFlow:
                     and parts.path.lower() == '/booking/confirm'):
                 self.paused = True
                 try:
-                    button = prepare_confirmation(page, self.settings, self.selected[1], self.selected[3],
+                    confirmed_settings = replace(self.settings, miramar_ticket_type=self.confirm_ticket_type)
+                    button = prepare_confirmation(page, confirmed_settings, self.selected[1], self.selected[3],
                                                   self.confirm_seats, self.stop)
                     if button is not None and not self.stop.is_set():
                         self.stage = 8

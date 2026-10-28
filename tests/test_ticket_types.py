@@ -88,6 +88,35 @@ class TicketTypeBrowserTests(unittest.TestCase):
                 self.assertEqual(selected, [{'name': kind.name, 'count': '3', 'visible': True}])
                 self.assertTrue(any(kind.label in line for line in self.logs))
 
+    def test_fallback_only_when_primary_missing(self):
+        self.settings.fallback_ticket_type = 'full_price'
+        self.run_selection()
+        self.assertEqual(self.page.evaluate('submitted[0].count'), '3')
+        for remove in ('panel', 'row'):
+            self.page.goto(SALES)
+            self.observe_submission()
+            panel = ticket_panel(self.page, '優惠套票')
+            (panel if remove == 'panel' else panel.locator('tr').filter(has=self.page.locator('.spName'))).evaluate('el => el.remove()')
+            self.run_selection()
+            selected = [i for i in self.page.evaluate('submitted') if i['count'] != '0']
+            self.assertEqual(selected[0]['name'], '全票')
+            self.assertEqual(selected[0]['count'], '3')
+
+    def test_fallback_does_not_hide_invalid_primary_or_missing_backup(self):
+        self.settings.fallback_ticket_type = 'full_price'
+        panel = ticket_panel(self.page, '優惠套票')
+        panel.locator('select option[value="3"]').evaluate('el => el.disabled=true')
+        with self.assertRaises(ValueError):
+            self.run_selection()
+        self.assert_untouched()
+        self.page.goto(SALES)
+        self.observe_submission()
+        ticket_panel(self.page, '優惠套票').evaluate('el => el.remove()')
+        ticket_panel(self.page, '一般票種').evaluate('el => el.remove()')
+        with self.assertRaises(ValueError):
+            self.run_selection()
+        self.assert_untouched()
+
     def test_dynamic_ids_and_codes_do_not_control_selection(self):
         self.page.locator('select').evaluate_all("els => els.forEach(el => {el.id='changed-'+el.id;el.removeAttribute('data-pricecode');el.removeAttribute('data-hocode')})")
         panel = ticket_panel(self.page, '優惠套票')

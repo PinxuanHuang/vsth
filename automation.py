@@ -305,19 +305,43 @@ def expand_ticket_panel(page, panel, category, log, stop, timeout):
     wait_booking(page, expanded, stop, f"{category}內容展開", timeout)
 
 
-def select_quantity_and_continue(page, settings, log, stop, timeout=30):
-    kind = get_ticket_type(settings.ticket_type)
+class TicketNotFound(ValueError):
+    pass
+
+
+def find_ticket_rows(page, kind, log, stop, timeout):
+    def wait_for_match(predicate, description):
+        try:
+            wait_booking(page, predicate, stop, description, timeout)
+        except ValueError as exc:
+            if not page.is_closed() and not stop.is_set() and not predicate():
+                raise TicketNotFound(str(exc)) from exc
+            raise
+
     panel = ticket_panel(page, kind.category)
-    wait_booking(page, lambda: panel.count() > 0, stop, f"{kind.category}區塊", timeout)
+    wait_for_match(lambda: panel.count() > 0, f"{kind.category}區塊")
     if panel.count() != 1:
         raise ValueError(f"頁面有多個{kind.category}區塊，請手動確認。")
     expand_ticket_panel(page, panel, kind.category, log, stop, timeout)
-    selector = settings.tickets_selector or QUANTITY_SELECTOR
     label = page.locator('td .spName, td').filter(has_text=re.compile(r'^\s*' + re.escape(kind.name) + r'\s*$'))
     rows = panel.locator('table tr').filter(has=label).filter(visible=True)
-    wait_booking(page, lambda: rows.count() > 0, stop, f"{kind.category}的{kind.name}列", timeout)
+    wait_for_match(lambda: rows.count() > 0, f"{kind.category}的{kind.name}列")
     if rows.count() != 1:
         raise ValueError(f"{kind.category}區塊有多個{kind.name}列，請手動確認。")
+    return rows
+
+
+def select_quantity_and_continue(page, settings, log, stop, timeout=30):
+    kind = get_ticket_type(settings.ticket_type)
+    try:
+        rows = find_ticket_rows(page, kind, log, stop, timeout)
+    except TicketNotFound:
+        if not settings.fallback_ticket_type or settings.fallback_ticket_type == settings.ticket_type:
+            raise
+        kind = get_ticket_type(settings.fallback_ticket_type)
+        log(f'找不到威秀主要票種，改找備用票種「{kind.label}」。')
+        rows = find_ticket_rows(page, kind, log, stop, timeout)
+    selector = settings.tickets_selector or QUANTITY_SELECTOR
     candidates = rows.locator(selector).filter(visible=True)
     wait_booking(page, lambda: candidates.count() > 0, stop, f"{kind.category}{kind.name}列的票數選單", timeout)
     if candidates.count() != 1:
@@ -721,6 +745,7 @@ class BrowserWorker(threading.Thread):
             with desktop_edge(pw, self.settings.url, profile, self.stop_event) as browser:
                 if browser is None:
                     return
+                self.emit('log', '已連線誠品專用 Edge，自動流程開始監控；進入選片頁後會自動選取。')
                 self.emit('log', '請在誠品視窗手動登入並完成驗證，再點網站「訂票」；進入選片頁後會依設定選擇影城與場次。')
                 flow = EsliteFlow(self.settings, self.emit, self.stop_event)
                 while browser.is_connected() and not self.stop_event.is_set():
@@ -833,6 +858,10 @@ class BrowserWorker(threading.Thread):
                     browser.close()
         except Exception as exc:
             if not self.stop_event.is_set():
-                self.emit("log", f"瀏覽器錯誤：{exc}\n請確認已安裝 Microsoft Edge。")
+                if self.settings.url == BOOKING_SITES['誠品']:
+                    done_text = '誠品自動流程已中止（請查看下方錯誤紀錄）'
+                    self.emit('log', f'誠品瀏覽器連線或流程錯誤：{exc}\n目前沒有監控網頁，手動登入後也不會自動選取；請排除問題後重新執行。')
+                else:
+                    self.emit("log", f"瀏覽器錯誤：{exc}\n請確認已安裝 Microsoft Edge。")
         finally:
             self.emit("done", done_text)

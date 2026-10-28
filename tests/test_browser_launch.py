@@ -33,6 +33,9 @@ class BrowserLaunchTests(unittest.TestCase):
         self.assertEqual(messages[-1][0], "done")
         self.assertTrue(any(kind == "log" and "test launch failure" in text for kind, text in messages))
         self.assertNotIn("Microsoft Edge", messages[-1][1])
+        self.assertIn('已中止', messages[-1][1])
+        self.assertTrue(any('目前沒有監控網頁' in message for kind, message in messages if kind == 'log'))
+        self.assertFalse(any('請確認已安裝' in message for kind, message in messages))
 
     def test_cancelled_worker_does_not_open_browser(self):
         worker = BrowserWorker(Settings(url=ESLITE_URL), queue.Queue())

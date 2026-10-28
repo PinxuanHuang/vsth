@@ -97,6 +97,42 @@ class EsliteTicketBrowserTests(unittest.TestCase):
         return EsliteTicketFlow(self.settings, lambda *args: self.messages.append(args),
                                self.stop, URL, self.attempted)
 
+    def test_primary_priority_and_fallback_once(self):
+        self.settings.eslite_fallback_ticket_type = 'member'
+        self.assertFalse(self.flow.tick(self.page))
+        self.assertEqual(self.flow.ticket_key, 'full_price')
+        self.assertEqual(self.page.locator('select').first.input_value(), '3')
+        self.page.goto(URL)
+        self.page.locator('.TicketType').first.locator('xpath=ancestor::tr[1]').evaluate('el => el.remove()')
+        self.flow = self.new_flow()
+        self.assertFalse(self.flow.tick(self.page))
+        self.assertEqual(self.flow.ticket_key, 'member')
+        self.assertTrue(self.flow.tick(self.page))
+        self.page.wait_for_function('posts.length === 1')
+        with self.assertRaises(ValueError):
+            self.flow.tick(self.page)
+        self.assertEqual(self.page.evaluate('posts'), ['ibtnOrderTickets'])
+
+    def test_missing_backup_and_ambiguous_primary_do_not_submit(self):
+        self.settings.eslite_fallback_ticket_type = 'single_package'
+        self.page.locator('.TicketType').first.locator('xpath=ancestor::tr[1]').evaluate('el => el.remove()')
+        with self.assertRaises(ValueError):
+            self.flow.tick(self.page)
+        self.assertEqual(self.page.evaluate('changes'), [])
+        self.page.goto(URL)
+        self.settings.eslite_fallback_ticket_type = 'member'
+        self.page.locator('.TicketType').first.locator('xpath=ancestor::tr[1]').evaluate('el => el.after(el.cloneNode(true))')
+        with self.assertRaises(ValueError):
+            self.new_flow().tick(self.page)
+        self.assertEqual(self.page.evaluate('changes'), [])
+
+    def test_primary_quantity_limit_does_not_use_backup(self):
+        self.settings.eslite_fallback_ticket_type = 'member'
+        self.page.locator('select').first.locator('option[value="3"]').evaluate('el => el.disabled=true')
+        with self.assertRaises(ValueError):
+            self.flow.tick(self.page)
+        self.assertEqual(self.page.evaluate('changes'), [])
+
     def test_supplied_dom_and_every_ticket_type(self):
         for index, key in enumerate(('full_price', 'cinephile', 'concession', 'member', 'student_military_police')):
             with self.subTest(key=key):

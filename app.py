@@ -46,6 +46,8 @@ class App(tk.Tk):
         self.ticket_type = tk.StringVar()
         self.eslite_ticket_type = tk.StringVar()
         self.miramar_ticket_type = tk.StringVar()
+        self.fallback_ticket_vars = {key: tk.StringVar(value='不使用') for key in (
+            'fallback_ticket_type', 'eslite_fallback_ticket_type', 'miramar_fallback_ticket_type')}
         self.inputs = []
         for row, (label, key) in enumerate((("購票網址", "url"), ("影城名稱", "cinema"), ("購票張數", "tickets")), 2):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 18), pady=7)
@@ -62,11 +64,13 @@ class App(tk.Tk):
                 ticket_frame.columnconfigure(2, weight=1)
                 entry = ttk.Spinbox(ticket_frame, from_=1, to=20, textvariable=self.variables[key], width=5)
                 entry.grid(row=0, column=0, sticky="w")
-                ttk.Label(ticket_frame, text="購票票種").grid(row=0, column=1, padx=(14, 8))
+                ttk.Label(ticket_frame, text="主要票種").grid(row=0, column=1, padx=(14, 8))
                 self.ticket_combo = ttk.Combobox(ticket_frame, textvariable=self.ticket_type,
                                                 values=[kind.label for kind in TICKET_TYPES.values()], state="readonly", width=30)
                 self.ticket_combo.grid(row=0, column=2, sticky="ew")
-                self.inputs.extend([entry, self.ticket_combo])
+                self.fallback_ticket_label = ttk.Label(ticket_frame, text='備用票種')
+                self.fallback_ticket_combo = ttk.Combobox(ticket_frame, state='readonly', width=30)
+                self.inputs.extend([entry, self.ticket_combo, self.fallback_ticket_combo])
                 continue
             else:
                 entry = ttk.Entry(frame, textvariable=self.variables[key])
@@ -225,6 +229,11 @@ class App(tk.Tk):
         self.ticket_type.set(get_ticket_type(settings.ticket_type).label)
         self.eslite_ticket_type.set(get_eslite_ticket_type(settings.eslite_ticket_type).label)
         self.miramar_ticket_type.set(get_miramar_ticket_type(settings.miramar_ticket_type).label)
+        for key, lookup in (('fallback_ticket_type', get_ticket_type),
+                            ('eslite_fallback_ticket_type', get_eslite_ticket_type),
+                            ('miramar_fallback_ticket_type', get_miramar_ticket_type)):
+            value = getattr(settings, key)
+            self.fallback_ticket_vars[key].set(lookup(value).label if value else '不使用')
         self.seat_mode.set(next(label for label, value in SEAT_MODES.items() if value == settings.seat_mode))
         self.seat_direction.set("左側優先" if settings.seat_direction == "left" else "右側優先")
         self.seat_contiguous.set(settings.seat_contiguous)
@@ -258,6 +267,14 @@ class App(tk.Tk):
             entry.configure(state='normal' if miramar and not running else 'disabled')
         self.ticket_combo.grid_configure(row=1 if miramar else 0, column=0 if miramar else 2,
                                          columnspan=3 if miramar else 1)
+        self.fallback_ticket_label.grid(row=2 if miramar else 1, column=0, columnspan=2, sticky='w', pady=(6, 0))
+        self.fallback_ticket_combo.grid(row=3 if miramar else 1, column=0 if miramar else 2,
+                                       columnspan=3 if miramar else 1, sticky='ew', pady=(6, 0))
+        fallback_key = 'miramar_fallback_ticket_type' if miramar else 'eslite_fallback_ticket_type' if eslite else 'fallback_ticket_type'
+        self.fallback_ticket_combo.configure(
+            textvariable=self.fallback_ticket_vars[fallback_key],
+            values=['不使用', *[kind.label for kind in (MIRAMAR_TICKET_TYPES if miramar else ESLITE_TICKET_TYPES if eslite else TICKET_TYPES).values()]],
+            state='disabled' if running else 'readonly')
         self.cinema_combo.configure(
             textvariable=self.variables['miramar_cinema' if miramar else 'eslite_cinema' if eslite else 'cinema'],
             values=MIRAMAR_CINEMAS if miramar else ESLITE_CINEMAS if eslite else list(CINEMAS))
@@ -355,6 +372,7 @@ class App(tk.Tk):
             except ValueError:
                 raise ValueError("票數必須是 1～20 的整數。") from None
             settings = Settings(**values, agree=self.agree.get(),
+                                **self.selected_fallback_ticket_types(),
                                 miramar_ticket_type=self.selected_miramar_ticket_type(),
                                 ticket_type=self.selected_ticket_type(),
                                 eslite_ticket_type=self.selected_eslite_ticket_type(),
@@ -373,6 +391,21 @@ class App(tk.Tk):
         self.log("設定已儲存，正在啟動新的瀏覽器工作階段。")
         self.worker = BrowserWorker(settings, self.events)
         self.worker.start()
+
+    def selected_fallback_ticket_types(self):
+        result = {}
+        for key, choices in (('fallback_ticket_type', TICKET_TYPES),
+                             ('eslite_fallback_ticket_type', ESLITE_TICKET_TYPES),
+                             ('miramar_fallback_ticket_type', MIRAMAR_TICKET_TYPES)):
+            label = self.fallback_ticket_vars[key].get()
+            if label == '不使用':
+                result[key] = ''
+                continue
+            matches = [value for value, kind in choices.items() if kind.label == label]
+            if len(matches) != 1:
+                raise ValueError('請從下拉選單選擇備用票種。')
+            result[key] = matches[0]
+        return result
 
     def selected_miramar_ticket_type(self):
         for key, kind in MIRAMAR_TICKET_TYPES.items():
@@ -617,8 +650,31 @@ def smoke_test(output):
     Path(output).write_text(json.dumps({"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "checks": ["tkinter", "date dropdowns", "leap year", "Edge", "three areas", "date and session position", "scoped normal consent", "dynamic quantity ID", "ticket type settings and locking", "site-specific ticket choices", "eslite quantity and system seats", "eslite scoped consent without transaction", "package collapse quantity and continue", "continue and keep browser", "seat settings", "preferred seat input and locking", "preferred seating and checkout", "masked login settings", "Windows encrypted credential storage", "checkout login once", "payment untouched"]}), encoding="utf-8")
 
 
+def edge_smoke_test(output):
+    """Check the packaged launch path using only an isolated about:blank profile."""
+    import tempfile
+    import threading
+    from playwright.sync_api import sync_playwright
+    from edge_session import desktop_edge
+
+    result = {'ok': False, 'frozen': bool(getattr(sys, 'frozen', False))}
+    try:
+        with tempfile.TemporaryDirectory(dir=Path(output).parent) as temporary, sync_playwright() as pw:
+            with desktop_edge(pw, 'about:blank', Path(temporary) / 'profile', threading.Event()) as browser:
+                assert browser is not None and browser.is_connected()
+                assert any(page.url == 'about:blank' for context in browser.contexts for page in context.pages)
+            assert not browser.is_connected()
+        result['ok'] = True
+    except Exception as exc:
+        result['error'] = str(exc)
+    Path(output).write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
+    return result['ok']
+
+
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+    if len(sys.argv) == 3 and sys.argv[1] == '--edge-smoke-test':
+        sys.exit(0 if edge_smoke_test(sys.argv[2]) else 1)
+    elif len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
         smoke_test(sys.argv[2])
     else:
         App().mainloop()

@@ -28,6 +28,9 @@ def normalize(text):
 def ticket_choice(rows, settings):
     name = get_miramar_ticket_type(settings.miramar_ticket_type).name
     matches = [(i, row) for i, row in enumerate(rows) if normalize(row['name']) == normalize(name)]
+    if not matches and settings.miramar_fallback_ticket_type:
+        name = get_miramar_ticket_type(settings.miramar_fallback_ticket_type).name
+        matches = [(i, row) for i, row in enumerate(rows) if normalize(row['name']) == normalize(name)]
     if len(matches) != 1:
         raise ValueError(f'美麗華票種「{name}」不存在或不唯一，未改選其他票種。')
     index, row = matches[0]
@@ -47,7 +50,7 @@ def ticket_choice(rows, settings):
     return index, str(units)
 
 
-def prepare_tickets(page, settings, movie, session, stop, log):
+def prepare_tickets(page, settings, movie, session, stop, log, on_selected=None):
     """Return the site's original next control after validating the selected count."""
     parts = urlsplit(page.url)
     query = parse_qs(parts.query)
@@ -77,6 +80,10 @@ def prepare_tickets(page, settings, movie, session, stop, log):
     if not snapshot:
         return None
     index, quantity = ticket_choice(snapshot, settings)
+    selected_key = settings.miramar_ticket_type
+    if normalize(snapshot[index]['name']) != normalize(get_miramar_ticket_type(settings.miramar_ticket_type).name):
+        selected_key = settings.miramar_fallback_ticket_type
+        log(f'找不到美麗華主要票種，改用備用票種「{snapshot[index]["name"]}」。')
     meals = form.locator('tr.ConcessionData select')
     if any(value != '0' for value in meals.evaluate_all('els => els.map(el => el.value)')):
         raise ValueError('餐點已有數量，請手動確認；程式不會額外加購餐點。')
@@ -95,4 +102,6 @@ def prepare_tickets(page, settings, movie, session, stop, log):
     if any(value != '0' for value in meals.evaluate_all('els => els.map(el => el.value)')):
         raise ValueError('選票後出現額外餐點，請手動確認。')
     log(f'美麗華已選擇 {snapshot[index]["name"]}：{quantity} 份，共 {settings.tickets} 張。')
+    if on_selected is not None:
+        on_selected(selected_key)
     return button

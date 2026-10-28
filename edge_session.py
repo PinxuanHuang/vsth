@@ -63,8 +63,8 @@ def desktop_edge(pw, url, profile, stop):
             opener = build_opener(ProxyHandler({}))
             deadline = time.monotonic() + 30
             while not stop.is_set():
-                if process.poll() is not None:
-                    raise RuntimeError('誠品 Edge 已關閉，或設定檔已被其他 Edge 視窗使用。')
+                # Edge may hand off to another process and exit its launcher.
+                # Only the requested DevTools endpoint confirms browser readiness.
                 try:
                     with opener.open(endpoint + '/json/version', timeout=1) as response:
                         info = json.load(response)
@@ -74,7 +74,13 @@ def desktop_edge(pw, url, profile, stop):
                 except (URLError, TimeoutError, OSError):
                     pass
                 if time.monotonic() >= deadline:
-                    raise RuntimeError('無法連接誠品 Edge，請確認 Edge 未禁止本機開發工具連線。')
+                    if process.poll() is not None:
+                        raise RuntimeError(
+                            'Edge 啟動程序已退出，但 30 秒內仍未連上本次專用瀏覽器。'
+                            '視窗可能仍開啟，或沿用了先前的專用設定檔。'
+                            '請手動關閉之前由購票助手開啟的該影城 Edge 視窗後再執行；'
+                            '不需關閉平常使用的 Edge，也不要刪除設定檔。')
+                    raise RuntimeError('30 秒內無法連上購票專用 Edge，自動流程尚未啟動；請確認 Edge 允許本機開發工具連線。')
                 stop.wait(0.2)
             yield browser
         finally:

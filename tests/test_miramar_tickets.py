@@ -1,5 +1,6 @@
 import threading
 import unittest
+from unittest.mock import patch
 from html import escape
 from playwright.sync_api import sync_playwright
 
@@ -57,6 +58,45 @@ class MiramarTicketTests(unittest.TestCase):
             self.prepare().click()
             self.assertEqual(self.page.locator(f'#dynamic-{index}').input_value(), '2')
             self.assertEqual(self.page.locator('.ConcessionData select').input_value(), '0')
+
+    def test_primary_priority_and_fallback_with_package_units(self):
+        self.settings.miramar_fallback_ticket_type = 'double_hotdog'
+        self.prepare()
+        self.assertEqual(self.page.locator('#dynamic-0').input_value(), '2')
+        self.page.set_content(fixture(seats=2))
+        self.page.locator('.TicketTypeData').first.evaluate('el => el.remove()')
+        self.settings.tickets = 4
+        flow = MiramarFlow(self.settings, lambda *x: None, threading.Event())
+        flow.page, flow.stage = self.page, 5
+        flow.selected = ['cinema', 'movie-new', '2031-02-03', 'session-b']
+        flow.tick([self.page])
+        self.assertEqual(self.page.locator('#dynamic-3').input_value(), '2')
+        self.assertEqual(flow.confirm_ticket_type, 'double_hotdog')
+        self.assertEqual(self.settings.miramar_ticket_type, 'event')
+        self.assertEqual(self.page.evaluate('window.nextClicks'), 1)
+        flow.tick([self.page])
+        self.assertEqual(self.page.evaluate('window.nextClicks'), 1)
+        self.page.goto('https://www.miramarcinemas.tw/Booking/Confirm')
+        flow.stage = 7
+        with patch('miramar.prepare_confirmation', return_value=None) as confirm:
+            flow.tick([self.page])
+        self.assertEqual(confirm.call_args.args[1].miramar_ticket_type, 'double_hotdog')
+        self.assertEqual(self.settings.miramar_ticket_type, 'event')
+
+    def test_backup_missing_and_primary_errors_never_select_backup(self):
+        self.settings.miramar_fallback_ticket_type = 'double_hotdog'
+        for mutation in (
+            "document.querySelector('.TicketTypeData').remove();document.querySelector('#dynamic-3').closest('tr').remove()",
+            "document.querySelector('#dynamic-0').disabled=true",
+            "document.querySelector('#dynamic-0 option[value=\"2\"]').disabled=true",
+            "document.querySelector('#ticketTypeTable tbody').append(document.querySelector('.TicketTypeData').cloneNode(true))",
+        ):
+            with self.subTest(mutation=mutation):
+                self.page.set_content(fixture())
+                self.page.evaluate(mutation)
+                with self.assertRaises(ValueError):
+                    self.prepare()
+                self.assertTrue(all(v == '0' for v in self.page.locator('select').evaluate_all('els => els.map(el => el.value)')))
 
     def test_package_seats_and_limits(self):
         self.page.set_content(fixture(seats=2, maximum=3))

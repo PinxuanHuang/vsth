@@ -99,6 +99,9 @@ class Settings:
     ticket_type: str = DEFAULT_TICKET_TYPE
     eslite_ticket_type: str = DEFAULT_ESLITE_TICKET_TYPE
     miramar_ticket_type: str = DEFAULT_MIRAMAR_TICKET_TYPE
+    fallback_ticket_type: str = ''
+    eslite_fallback_ticket_type: str = ''
+    miramar_fallback_ticket_type: str = ''
     miramar_name: str = field(default='', repr=False)
     miramar_phone: str = field(default='', repr=False)
     miramar_carrier: str = field(default='', repr=False)
@@ -144,6 +147,14 @@ class Settings:
             if self.eslite_time and not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", self.eslite_time):
                 raise ValueError("誠品場次時間請輸入 HH:MM，例如 13:20。")
         get_ticket_type(self.ticket_type)
+        for key, lookup in (('fallback_ticket_type', get_ticket_type),
+                            ('eslite_fallback_ticket_type', get_eslite_ticket_type),
+                            ('miramar_fallback_ticket_type', get_miramar_ticket_type)):
+            value = getattr(self, key)
+            if not isinstance(value, str):
+                raise ValueError('備用票種設定格式錯誤。')
+            if value:
+                lookup(value)
         if self.url == BOOKING_SITES['美麗華影城']:
             if any(not isinstance(getattr(self, key), str) for key in ('miramar_name', 'miramar_phone', 'miramar_carrier')):
                 raise ValueError('美麗華確認資料請輸入文字。')

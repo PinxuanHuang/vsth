@@ -91,6 +91,7 @@ class EsliteTicketFlow:
         self.deadline = time.monotonic() + 30
         self.pending = None
         self.last_status = None
+        self.ticket_key = None
 
     def wait(self, message):
         if time.monotonic() > self.deadline:
@@ -134,10 +135,18 @@ class EsliteTicketFlow:
             return False
         if any(row['count'] != 1 for row in rows):
             raise ValueError('票種與數量欄位無法唯一對應，請手動確認。')
-        wanted = get_eslite_ticket_type(self.settings.eslite_ticket_type).name
+        wanted = get_eslite_ticket_type(self.ticket_key or self.settings.eslite_ticket_type).name
         matches = [row for row in rows if ticket_name(row) == normalized(wanted)]
+        if not matches and self.ticket_key is None and self.settings.eslite_fallback_ticket_type:
+            wanted = get_eslite_ticket_type(self.settings.eslite_fallback_ticket_type).name
+            matches = [row for row in rows if ticket_name(row) == normalized(wanted)]
+            if len(matches) == 1:
+                self.ticket_key = self.settings.eslite_fallback_ticket_type
+                self.emit('log', f'找不到誠品主要票種，改用備用票種「{wanted}」。')
         if len(matches) != 1:
             raise ValueError(f'找不到唯一的「{wanted}」票種；不會改選其他票種。')
+        if self.ticket_key is None:
+            self.ticket_key = self.settings.eslite_ticket_type
         target = matches[0]
         quantity_option(target, self.settings.tickets)
         for row in rows:
